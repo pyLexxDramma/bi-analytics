@@ -6137,7 +6137,9 @@ def _deviations_snapshot_month_sort_key(label: str) -> tuple:
     return (2, str(label))
 
 
-def _deviations_snapshot_month_labels(df: pd.DataFrame) -> list[str]:
+def _msp_snapshot_month_labels(
+    df: pd.DataFrame, *, descending: bool = False
+) -> list[str]:
     """Месяцы выгрузки MSP (snapshot_date) для multiselect «Период»."""
     if df is None or getattr(df, "empty", True) or "snapshot_date" not in df.columns:
         return []
@@ -6146,7 +6148,12 @@ def _deviations_snapshot_month_labels(df: pd.DataFrame) -> list[str]:
     return sorted(
         {format_period_ru(p) for p in periods if pd.notna(p)},
         key=_deviations_snapshot_month_sort_key,
+        reverse=bool(descending),
     )
+
+
+def _deviations_snapshot_month_labels(df: pd.DataFrame) -> list[str]:
+    return _msp_snapshot_month_labels(df, descending=False)
 
 
 def _deviations_snapshot_month_options(df: pd.DataFrame) -> list[str]:
@@ -19209,6 +19216,13 @@ def dashboard_rd_delay(df, is_pd: bool = False):
         st.info("Пожалуйста, убедитесь, что файл содержит все необходимые колонки.")
         return
 
+    if is_pd:
+        try:
+            _pd_snap_all = st.session_state.get("project_data_all_snapshots")
+        except Exception:
+            _pd_snap_all = None
+        if _pd_snap_all is not None and not getattr(_pd_snap_all, "empty", True):
+            df = _pd_snap_all.copy()
     if project_col and project_col in df.columns:
         df = _project_column_apply_canonical(df, project_col)
     if is_pd:
@@ -19721,10 +19735,20 @@ def dashboard_rd_delay(df, is_pd: bool = False):
                 if _pct_pd_col and _pct_pd_col in filtered_df.columns
                 else pd.Series(0.0, index=filtered_df.index)
             )
-            filtered_df["_pd_row_plan"] = (
-                _bf_dt.notna() & (_bf_dt.dt.normalize() <= _ts_pd)
+            _pd_plan_fin_dt = _pd_delay_plan_finish_dt_series(
+                filtered_df,
+                baseline_col=_bfin,
+                schedule_col=_sfin or plan_end_col,
+            ).reindex(filtered_df.index)
+            _pd_start_dt = _bs_dt.where(_bs_dt.notna(), _ss_dt).reindex(filtered_df.index)
+            _af_pd = filtered_df["_fact_end_dt"].reindex(filtered_df.index)
+            filtered_df["_pd_row_plan"] = _pd_delay_plan_due_row_mask(
+                _pd_plan_fin_dt, _pd_start_dt, _ts_pd
             ).astype(int)
-            filtered_df["_pd_row_fact"] = (_pc_pd >= 99.99).astype(int)
+            filtered_df["_pd_row_fact"] = (
+                (_pc_pd >= 99.99)
+                | (_af_pd.notna() & (_af_pd.dt.normalize() <= _ts_pd))
+            ).astype(int)
             # Просрочка: разделы с «Окончание» > «Базовое окончание» среди сроков плана
             # (базовое окончание на дату отчёта или раньше — тот же охват, что «План ПД»).
             _pd_bf_n = _bf_dt.dt.normalize()
@@ -30828,17 +30852,20 @@ def _pd_kpi_deviation_text_and_color(plan_v, fact_v) -> tuple[str, str]:
 
 
 def _render_pd_deviation_metric(label: str, plan_v, fact_v) -> None:
-    """Метрика отклонения ПД с цветом значения (как st.metric, но с красным/зелёным)."""
+    """Метрика отклонения ПД: факт − план; «+» зелёный, «−» красный."""
     from html import escape as html_esc
 
+    from dashboards.light_theme import finance_chart_label_color
+
     disp, color = _pd_kpi_deviation_text_and_color(plan_v, fact_v)
-    tone = "pd-doc-dev-metric-pos" if color == "#46d68a" else (
-        "pd-doc-dev-metric-neg" if color == "#ff5454" else "pd-doc-dev-metric-zero"
-    )
+    label_color = finance_chart_label_color(dark="#c8d8ec", light="#64748b")
     st.markdown(
         f'<div class="pd-doc-dev-metric">'
-        f'<div class="pd-doc-dev-metric-label">{html_esc(label)}</div>'
-        f'<div class="pd-doc-dev-metric-value {tone}">{html_esc(disp)}</div>'
+        f'<div class="pd-doc-dev-metric-label" style="color:{label_color}!important;'
+        f'-webkit-text-fill-color:{label_color}!important;">{html_esc(label)}</div>'
+        f'<div class="pd-doc-dev-metric-value" style="color:{color}!important;'
+        f'-webkit-text-fill-color:{color}!important;font-size:1.75rem;font-weight:600;">'
+        f"{html_esc(disp)}</div>"
         f"</div>",
         unsafe_allow_html=True,
     )
@@ -31655,11 +31682,24 @@ def _pd_build_project_indicator_chart_data(
     work = source_df.loc[delay_m.fillna(False)].copy()
     if work.empty:
         return pd.DataFrame()
-    bf = bf_dt.reindex(work.index)
-    pc = pct_series.reindex(work.index).fillna(0.0)
     ts = pd.Timestamp(report_date).normalize()
-    work["_pd_row_plan"] = (bf.notna() & (bf.dt.normalize() <= ts)).astype(int)
-    work["_pd_row_fact"] = (pc >= 99.99).astype(int)
+    plan_fin = _pd_delay_plan_finish_dt_series(work).reindex(work.index)
+    bs = pd.Series(pd.NaT, index=work.index)
+    if "base start" in work.columns:
+        bs = pd.to_datetime(work["base start"], errors="coerce", dayfirst=True, format="mixed")
+    if "plan start" in work.columns:
+        ps = pd.to_datetime(work["plan start"], errors="coerce", dayfirst=True, format="mixed")
+        bs = bs.where(bs.notna(), ps)
+    pc = pct_series.reindex(work.index).fillna(0.0)
+    af = (
+        pd.to_datetime(work["_fact_end_dt"], errors="coerce", dayfirst=True, format="mixed")
+        if "_fact_end_dt" in work.columns
+        else pd.Series(pd.NaT, index=work.index)
+    )
+    work["_pd_row_plan"] = _pd_delay_plan_due_row_mask(plan_fin, bs, ts).astype(int)
+    work["_pd_row_fact"] = (
+        (pc >= 99.99) | (af.notna() & (af.dt.normalize() <= ts))
+    ).astype(int)
     return (
         work.groupby(project_col, as_index=False)
         .agg(
@@ -32316,6 +32356,57 @@ def _pd_baseline_finish_series(
     return pd.Series(pd.NaT, index=df.index)
 
 
+def _pd_delay_plan_finish_dt_series(
+    df: pd.DataFrame,
+    row_mask: Optional[pd.Series] = None,
+    *,
+    baseline_col: Optional[str] = None,
+    schedule_col: Optional[str] = None,
+) -> pd.Series:
+    """Срок сдачи раздела ПД для графика просрочки: БП → текущий план / plan end."""
+    m = (
+        row_mask.fillna(False)
+        if row_mask is not None
+        else pd.Series(True, index=df.index)
+    )
+    b_base = baseline_col or _pd_msp_find_baseline_finish_col(df)
+    s_ref = schedule_col or _pd_msp_find_schedule_finish_col(df)
+    if not s_ref and "plan end" in df.columns:
+        s_ref = "plan end"
+    pick = _pd_pick_finish_col(df, m, baseline_col=b_base, schedule_col=s_ref)
+    out = _pd_baseline_finish_series(df, b_base)
+    if pick and pick in df.columns:
+        pick_dt = pd.to_datetime(
+            df[pick], errors="coerce", dayfirst=True, format="mixed"
+        )
+        out = out.where(out.notna(), pick_dt)
+    if "plan end" in df.columns:
+        pe = pd.to_datetime(
+            df["plan end"], errors="coerce", dayfirst=True, format="mixed"
+        )
+        out = out.where(out.notna(), pe)
+    return out
+
+
+def _pd_delay_plan_due_row_mask(
+    plan_finish: pd.Series,
+    plan_start: pd.Series,
+    ts: pd.Timestamp,
+) -> pd.Series:
+    """Раздел в плане на дату отчёта: срок сдачи наступил или работы уже начаты."""
+    ts_n = pd.Timestamp(ts).normalize()
+    pf = pd.to_datetime(plan_finish, errors="coerce", dayfirst=True, format="mixed")
+    ps = pd.to_datetime(plan_start, errors="coerce", dayfirst=True, format="mixed")
+    due_finish = pf.notna() & (pf.dt.normalize() <= ts_n)
+    due_start = (
+        ps.notna()
+        & (ps.dt.normalize() <= ts_n)
+        & (~due_finish)
+        & (pf.isna() | (pf.dt.normalize() > ts_n))
+    )
+    return (due_finish | due_start).fillna(False)
+
+
 def _pd_msp_find_schedule_finish_col(df: pd.DataFrame):
     # «Окончание» (текущий график) → `plan end` / `Окончание`. НЕ базовое окончание.
     for cand in ("plan end", "finish"):
@@ -32710,10 +32801,19 @@ def dashboard_documentation(
         if "project name" in df.columns
         else find_column(df, ["Проект", "project"])
     )
+    _pd_proj_opts_src = df
+    if is_pd:
+        try:
+            _pd_snap_all = st.session_state.get("project_data_all_snapshots")
+        except Exception:
+            _pd_snap_all = None
+        if _pd_snap_all is not None and not getattr(_pd_snap_all, "empty", True):
+            _pd_proj_opts_src = _pd_snap_all.copy()
+            df = _pd_snap_all.copy()
+    if project_col and project_col in _pd_proj_opts_src.columns:
+        _pd_proj_opts_src = _project_column_apply_canonical(_pd_proj_opts_src, project_col)
     if project_col and project_col in df.columns:
         df = _project_column_apply_canonical(df, project_col)
-    if is_pd:
-        df = _pd_dedupe_msp_tasks_latest(df)
     if not is_pd:
         _cipher_enrich_doc = find_column(
             df,
@@ -32747,15 +32847,34 @@ def dashboard_documentation(
         # Filter by project (несколько проектов; пусто = все)
         # R23-06 (стр.17): в ПД по умолчанию выбраны все проекты («Все» вместо «Select all»).
         selected_projects_doc: list[str] = []
-        if project_col and project_col in df.columns:
+        if project_col and project_col in _pd_proj_opts_src.columns:
             with filter_col1:
-                _proj_opts = _unique_project_labels_for_select(df[project_col])
+                _proj_opts = _unique_project_labels_for_select(_pd_proj_opts_src[project_col])
                 selected_projects_doc, _ = project_filter_multiselect(st, _proj_opts,
                     key=f"{_doc_fk}project_filter_ms",
                 )
         selected_date_start = None
         selected_date_end = None
         selected_sections_doc: list[str] = []
+        def _period_filter_widgets_pd() -> None:
+            _month_labels = _msp_snapshot_month_labels(df, descending=True)
+            if _month_labels:
+                _pd_period_key = f"{_doc_fk}period_month"
+                _deviations_migrate_period_month_multiselect_state(
+                    st, _pd_period_key, _month_labels
+                )
+                st.multiselect(
+                    "Период",
+                    options=_month_labels,
+                    key=_pd_period_key,
+                    placeholder="Все месяцы",
+                    help=(
+                        "Месяцы выгрузки MSP на FTP (от текущего к более ранним). "
+                        "Пустой выбор — последний снимок по каждому проекту."
+                    ),
+                )
+                return
+            _period_filter_widgets()
         def _period_filter_widgets() -> None:
             nonlocal selected_date_start, selected_date_end
             if not period_source_col or period_source_col not in df.columns:
@@ -32893,7 +33012,7 @@ def dashboard_documentation(
                 _period_filter_widgets()
         else:
             with filter_col2:
-                _period_filter_widgets()
+                _period_filter_widgets_pd()
             with filter_col3:
                 _section_filter_widgets_pd()
         # Filter by RD status — отдельной строкой, чтобы не ломать сетку selectbox’ов
@@ -32954,6 +33073,13 @@ def dashboard_documentation(
             pd_report_date = selected_date_end
         elif selected_date_start:
             pd_report_date = selected_date_start
+        if "snapshot_date" in filtered_df.columns:
+            filtered_df = _deviations_apply_snapshot_month_filter(
+                filtered_df,
+                session_key=f"{_doc_fk}period_month",
+                dynamics=False,
+            )
+            filtered_df = _pd_dedupe_msp_tasks_latest(filtered_df)
 
     # Apply project filter
     # R23-06 (стр.17): если выбраны все опции — фильтр не сужает выборку (эквивалент «Все»).
@@ -32962,12 +33088,11 @@ def dashboard_documentation(
     if (
         selected_projects_doc
         and project_col
-        and project_col in df.columns
+        and project_col in filtered_df.columns
     ):
-        _pk_set_doc = {_project_filter_norm_key(p) for p in selected_projects_doc}
-        filtered_df = filtered_df[
-            filtered_df[project_col].map(_project_filter_norm_key).isin(_pk_set_doc)
-        ]
+        filtered_df = _filter_df_by_project_labels(
+            filtered_df, selected_projects_doc, col=project_col
+        )
 
     if selected_sections_doc:
         _sset = {str(x).strip() for x in selected_sections_doc if str(x).strip()}
@@ -32997,9 +33122,10 @@ def dashboard_documentation(
                     filtered_df[section_col].astype(str).str.strip().isin(_sset)
                 ]
 
-    # Apply date filter (РД и ПД — срез по plan end / plan start)
+    # Apply date filter (РД и ПД без snapshot_date — срез по plan end / plan start)
     if (
-        selected_date_start
+        not (is_pd and "snapshot_date" in df.columns)
+        and selected_date_start
         and selected_date_end
         and period_source_col
         and period_source_col in df.columns
@@ -34118,8 +34244,27 @@ def dashboard_documentation(
                         else pd.Series(pd.NaT, index=df.index)
                     )
 
+                    _plan_dates_chart = _chart_bf_bp.where(_chart_bf_bp.notna(), _chart_bf)
+                    today = pd_report_date if is_pd else date.today()
+                    ts_today = pd.Timestamp(today)
+                    m_kpi = plan_line_mask.fillna(False)
+                    m_kpi_bp = m_kpi & _plan_dates_chart.notna()
+                    plan_total = float(m_kpi_bp.sum())
+                    plan_to_date = int(
+                        (
+                            m_kpi_bp
+                            & (_plan_dates_chart.dt.normalize() <= ts_today)
+                        ).sum()
+                    )
+                    done_sec = m_kpi_bp & (
+                        (pc >= 99.99)
+                        | (af.notna() & (af.dt.normalize() <= ts_today))
+                    )
+                    fact_to_date = int(done_sec.sum())
+                    deviation_to_date = float(fact_to_date - plan_to_date)
+
                     plan_curve = _pd_cumsum_by_granularity(
-                        _chart_bf, plan_line_mask, gran_key
+                        _plan_dates_chart, m_kpi_bp, gran_key
                     )
                     plan_curve["Тип"] = "План по проекту (БП)"
                     fcst_curve = _pd_cumsum_by_granularity(
@@ -34147,21 +34292,6 @@ def dashboard_documentation(
                         )
                         dynamics_df = pd.concat([zplan, zfcst, dynamics_df], ignore_index=True)
                     dynamics_df = dynamics_df.sort_values(["Тип", "Дата"])
-                    today = pd_report_date if is_pd else date.today()
-                    ts_today = pd.Timestamp(today)
-                    m_kpi = plan_line_mask.fillna(False)
-                    # KPI «План (БП)» и необходимая производительность — только по базовому окончанию.
-                    m_kpi_bp = m_kpi & _chart_bf_bp.notna()
-                    plan_total = float(m_kpi_bp.sum())
-                    plan_to_date = int(
-                        (m_kpi_bp & (_chart_bf_bp.dt.normalize() <= ts_today)).sum()
-                    )
-                    done_sec = m_kpi_bp & (
-                        (pc >= 99.99)
-                        | (af.notna() & (af.dt.normalize() <= ts_today))
-                    )
-                    fact_to_date = int(done_sec.sum())
-                    deviation_to_date = float(plan_to_date - fact_to_date)
                     c1, c2, c3, c4 = st.columns(4, gap="small")
                     with c1:
                         st.metric("План по проекту (БП)", f"{plan_total:,.0f}".replace(",", " "))
@@ -34177,8 +34307,8 @@ def dashboard_documentation(
                         )
                     # П.7: |отклонение| / (дней до max БО по задачам плана) × ×1/×7/×30; max БО — только base end
                     nec = _pd_necessary_productivity(
-                        deviation_to_date,
-                        _chart_bf_bp.loc[m_kpi_bp],
+                        float(plan_to_date - fact_to_date),
+                        _plan_dates_chart.loc[m_kpi_bp],
                         today,
                         mult_nec,
                     )
@@ -34278,6 +34408,7 @@ def dashboard_documentation(
                             yaxis_title="Количество разделов ПД",
                             hovermode="x unified",
                             height=550,
+                            showlegend=True,
                             xaxis=dict(
                                 title=dict(
                                     text="Период",
@@ -34314,6 +34445,10 @@ def dashboard_documentation(
                             elif "Прогноз" in _tn:
                                 _tr.line.color = _PD_FCST_LINE_COLOR
                                 _tr.line.width = 3
+                                # Пунктир: если прогноз совпадает с планом (нет базового
+                                # окончания — обе линии падают на plan end), синяя линия
+                                # плана видна сквозь разрывы оранжевого прогноза.
+                                _tr.line.dash = "dash"
                                 _tr.marker.color = _PD_FCST_LINE_COLOR
                                 _tr.marker.size = 9
                                 _tr.textfont = dict(color=_PD_FCST_LINE_COLOR, size=10)
