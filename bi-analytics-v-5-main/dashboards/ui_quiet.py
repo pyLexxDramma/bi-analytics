@@ -10,7 +10,7 @@ import hashlib
 from contextlib import contextmanager
 from datetime import date, datetime
 from html import escape as html_escape
-from typing import Any, Generator, List, Optional, Sequence, Tuple
+from typing import Any, Generator, List, Mapping, Optional, Sequence, Tuple
 
 Chip = Tuple[str, str]
 
@@ -320,13 +320,21 @@ def _collapse_filters_expander_on_dashboard_open(st: Any, expander_key: str) -> 
         st.session_state[expander_key] = False
 
 
-def reset_filter_widgets(st: Any, keys: Sequence[str]) -> None:
+def reset_filter_widgets(
+    st: Any,
+    keys: Sequence[str],
+    *,
+    defaults: Optional[Mapping[str, Any]] = None,
+) -> None:
     """Сбросить значения виджетов по ключам session_state.
 
     Ключ, оканчивающийся на ``*`` или ``_``, трактуется как префикс: чистятся все
     ключи session_state с таким началом. Это нужно для дашбордов с динамическими
     ключами (напр. Гант: ``gantt_block_filter_v2_{хэш_проекта}``), где точное имя
     заранее неизвестно.
+
+    ``defaults`` — явные значения после очистки (selectbox в Streamlit иначе
+    может сохранить последний выбор в UI).
     """
     if not hasattr(st, "session_state"):
         return
@@ -347,6 +355,9 @@ def reset_filter_widgets(st: Any, keys: Sequence[str]) -> None:
             es = str(existing)
             if any(es.startswith(p) for p in prefixes):
                 st.session_state.pop(existing, None)
+    if defaults:
+        for k, v in defaults.items():
+            st.session_state[k] = v
 
 
 def render_filter_chips(st: Any, chips: Optional[Sequence[Chip]]) -> None:
@@ -429,6 +440,7 @@ def filters_popover(
     *,
     active_count: int = 0,
     reset_keys: Optional[Sequence[str]] = None,
+    reset_defaults: Optional[Mapping[str, Any]] = None,
     panel_key: Optional[str] = None,
     expanded: bool = False,
 ) -> Generator[_FiltersPopoverHandle, None, None]:
@@ -453,7 +465,9 @@ def filters_popover(
                     key=_reset_button_key(reset_keys),
                     help="Сбросить фильтры этого отчёта к значениям по умолчанию",
                 ):
-                    reset_filter_widgets(st, reset_keys)
+                    reset_filter_widgets(
+                        st, reset_keys, defaults=reset_defaults
+                    )
                     st.rerun()
         yield handle
 
@@ -471,6 +485,7 @@ def filters_panel(
     title: str = "Фильтры",
     *,
     reset_keys: Optional[Sequence[str]] = None,
+    reset_defaults: Optional[Mapping[str, Any]] = None,
     panel_key: Optional[str] = None,
     expanded: bool = False,
 ) -> Generator[None, None, None]:
@@ -479,7 +494,12 @@ def filters_panel(
     Новые отчёты с чипами — ``filters_popover`` напрямую.
     """
     with filters_popover(
-        st, label=title, reset_keys=reset_keys, panel_key=panel_key, expanded=expanded
+        st,
+        label=title,
+        reset_keys=reset_keys,
+        reset_defaults=reset_defaults,
+        panel_key=panel_key,
+        expanded=expanded,
     ) as _fp:
         inject_unified_filters_css(st)
         st.markdown('<div class="bi-filters-scope">', unsafe_allow_html=True)

@@ -5342,7 +5342,7 @@ def _deviations_l3_building_option_labels(
     """Совместимость: сначала как гант (`plot_df`), иначе переданные колонки уровня/задачи."""
     g = _deviations_l3_building_labels_like_gantt(d)
     if g:
-        return g
+        return _gantt_dedupe_block_filter_values(g)
     if d is None or getattr(d, "empty", True):
         return []
     if not level_col or not task_col or level_col not in d.columns or task_col not in d.columns:
@@ -5351,13 +5351,14 @@ def _deviations_l3_building_option_labels(
     if not (_lv == 3).any():
         return []
     ser = d.loc[_lv == 3, task_col].dropna()
-    return sorted(
+    raw = sorted(
         {
             _deviations_gantt_like_task_label(x)
             for x in ser.tolist()
             if _deviations_gantt_like_task_label(x)
         }
     )
+    return _gantt_dedupe_block_filter_values(raw)
 
 
 def _deviations_filter_df_under_l3_building(
@@ -5897,6 +5898,71 @@ def _gantt_building_filter_values_for_df(
     return _gantt_dedupe_block_filter_values(raw)
 
 
+def _deviations_building_select_options(
+    df_full: pd.DataFrame,
+    *,
+    project_state_key: str = "devcombo_project",
+    block_state_key: str = "devcombo_block",
+    period_session_key: str = "devcombo_period_month",
+    reason_session_key: str = "devcombo_reason",
+    building_col: str | None = None,
+) -> list[str]:
+    """Строения из строк макета — тот же срез, что у таблицы (без фильтра «Строение»)."""
+    if df_full is None or getattr(df_full, "empty", True):
+        return []
+    if building_col is None:
+        building_col = _find_deviations_building_column(df_full)
+    work = df_full.copy()
+    if "project name" in work.columns:
+        work = _project_column_apply_canonical(work, "project name")
+    work = _deviations_maket_attach_ancestor_keys(work)
+    sel_proj = st.session_state.get(project_state_key, "Все")
+    if sel_proj != "Все" and "project name" in work.columns:
+        work = _deviations_filter_df_by_project_name(work, sel_proj)
+    sel_block = st.session_state.get(block_state_key, "Все")
+    work = _deviations_apply_block_building_filters(
+        work, sel_block, "Все", building_col
+    )
+    work = _deviations_apply_snapshot_month_filter(
+        work, session_key=period_session_key, dynamics=False
+    )
+    work = _deviations_apply_reason_filter(work, session_key=reason_session_key)
+    _pt_en = _deviations_period_type_en_from_ru(
+        st.session_state.get("dynamics_period", "Месяц")
+    )
+    work = _deviations_apply_report_period_filter(
+        work, period_type_en=_pt_en
+    )
+    maket = _deviations_maket_prepare_df(work)
+    if maket.empty:
+        return []
+    raw: list[str] = []
+    for _, row in maket.iterrows():
+        lbl = _deviations_maket_building_label(row, maket, building_col)
+        if lbl:
+            raw.append(lbl)
+    return _gantt_dedupe_block_filter_values(raw)
+
+
+def _deviations_render_building_selectbox(
+    options: list[str],
+    *,
+    state_key: str,
+    label: str = "Строение",
+) -> None:
+    """Селект «Строение»; при пустом списке — подпись, без лишних пунктов."""
+    opts = [x for x in (options or []) if str(x).strip()]
+    if not opts:
+        st.session_state[state_key] = "Все"
+        suppress_caption("Нет строения")
+        return
+    full = ["Все"] + opts
+    cur = st.session_state.get(state_key, "Все")
+    if cur not in full:
+        st.session_state[state_key] = "Все"
+    st.selectbox(label, full, key=state_key)
+
+
 def _deviations_filter_df_by_period_range(
     filtered_df: pd.DataFrame, range_key: str
 ) -> pd.DataFrame:
@@ -5940,7 +6006,7 @@ def _deviations_filter_df_by_period_range(
 
 
 def _deviations_snapshot_month_sort_key(label: str) -> tuple:
-    if str(label or "").strip() == "Все месяцы":
+    if str(label or "").strip() in ("", "Все месяцы"):
         return (0, 0)
     p = _deviations_filter_month_string_to_period(label)
     if p is not None:
@@ -5948,17 +6014,85 @@ def _deviations_snapshot_month_sort_key(label: str) -> tuple:
     return (2, str(label))
 
 
-def _deviations_snapshot_month_options(df: pd.DataFrame) -> list[str]:
-    """Месяцы выгрузки MSP (snapshot_date) для селекта «Период»."""
+def _deviations_snapshot_month_labels(df: pd.DataFrame) -> list[str]:
+    """Месяцы выгрузки MSP (snapshot_date) для multiselect «Период»."""
     if df is None or getattr(df, "empty", True) or "snapshot_date" not in df.columns:
         return []
     sd = pd.to_datetime(df["snapshot_date"], errors="coerce")
     periods = sd.dropna().dt.to_period("M").unique()
-    labels = sorted(
+    return sorted(
         {format_period_ru(p) for p in periods if pd.notna(p)},
         key=_deviations_snapshot_month_sort_key,
     )
-    return ["Все месяцы"] + labels
+
+
+def _deviations_snapshot_month_options(df: pd.DataFrame) -> list[str]:
+    """Совместимость: список месяцев + «Все месяцы» (legacy selectbox)."""
+    labels = _deviations_snapshot_month_labels(df)
+    return (["Все месяцы"] + labels) if labels else []
+
+
+def _deviations_migrate_period_month_multiselect_state(
+    st: Any, key: str, month_labels: list[str]
+) -> None:
+    """Пустой список = все месяцы; миграция со старого selectbox (str)."""
+    migrate_gdrs_month_multiselect_state(st, key, month_labels)
+    try:
+        raw = st.session_state.get(key)
+        if isinstance(raw, str):
+            s = raw.strip()
+            opts = {str(x).strip() for x in month_labels if str(x).strip()}
+            if s in ("", "Все месяцы"):
+                st.session_state[key] = []
+            elif s in opts:
+                st.session_state[key] = [s]
+            else:
+                st.session_state[key] = []
+    except Exception:
+        pass
+
+
+def _deviations_selected_upload_month_periods(session_key: str) -> list:
+    """Выбранные месяцы выгрузки MSP из session_state; [] — все месяцы."""
+    raw = st.session_state.get(session_key, [])
+    if isinstance(raw, str):
+        s = raw.strip()
+        if s in ("", "Все месяцы"):
+            return []
+        p = _deviations_filter_month_string_to_period(s)
+        return [p] if p is not None else []
+    if not isinstance(raw, list):
+        return []
+    out: list = []
+    seen: set = set()
+    for lbl in raw:
+        p = _deviations_filter_month_string_to_period(lbl)
+        if p is not None and int(p.ordinal) not in seen:
+            seen.add(int(p.ordinal))
+            out.append(p)
+    return out
+
+
+def _deviations_filter_snapshots_by_upload_months(
+    snap_part: pd.DataFrame,
+    selected_periods: list,
+) -> pd.DataFrame:
+    """Последний снимок на (проект × месяц выгрузки) для выбранных месяцев."""
+    if snap_part is None or getattr(snap_part, "empty", True) or not selected_periods:
+        return snap_part.iloc[0:0].copy() if snap_part is not None else pd.DataFrame()
+    out = snap_part.copy()
+    out["_dev_upload_month"] = out["snapshot_date"].dt.to_period("M")
+    out = out[out["_dev_upload_month"].isin(selected_periods)].copy()
+    if out.empty:
+        return out
+    if "project name" in out.columns:
+        latest = out.groupby(
+            ["project name", "_dev_upload_month"], dropna=False
+        )["snapshot_date"].transform("max")
+    else:
+        latest = out.groupby("_dev_upload_month")["snapshot_date"].transform("max")
+    out = out[out["snapshot_date"] == latest]
+    return out.drop(columns=["_dev_upload_month"], errors="ignore")
 
 
 def _deviations_apply_snapshot_month_filter(
@@ -5968,13 +6102,14 @@ def _deviations_apply_snapshot_month_filter(
     dynamics: bool = False,
 ) -> pd.DataFrame:
     """
-    Срез по месяцу выгрузки MSP (snapshot_date).
-    «Все месяцы»: последний снимок на проект (dynamics — последний за каждый месяц выгрузки).
-    Конкретный месяц: данные файла с максимальной snapshot_date в этом месяце.
+    Срез по месяцу(ам) выгрузки MSP (snapshot_date).
+    Пустой multiselect / «Все месяцы»: последний снимок на проект
+    (dynamics — последний за каждый месяц выгрузки).
+    Один или несколько месяцев: данные файла с max snapshot_date в каждом месяце.
     """
     if df is None or getattr(df, "empty", True):
         return df
-    sel = str(st.session_state.get(session_key, "Все месяцы") or "Все месяцы").strip()
+    selected_periods = _deviations_selected_upload_month_periods(session_key)
     if "snapshot_date" not in df.columns:
         legacy_key = "devcombo_period_range" if session_key == "devcombo_period_month" else "reason_period_range"
         return _deviations_filter_df_by_period_range(df, legacy_key)
@@ -5984,13 +6119,7 @@ def _deviations_apply_snapshot_month_filter(
         _deduplicate_project_snapshots_last_per_month,
     )
 
-    if sel in ("", "Все месяцы"):
-        if dynamics:
-            return _deduplicate_project_snapshots_last_per_month(df)
-        return _deduplicate_project_snapshots(df)
-
-    period = _deviations_filter_month_string_to_period(sel)
-    if period is None:
+    if not selected_periods:
         if dynamics:
             return _deduplicate_project_snapshots_last_per_month(df)
         return _deduplicate_project_snapshots(df)
@@ -6005,24 +6134,26 @@ def _deviations_apply_snapshot_month_filter(
 
     snap_part = out[has_snap].copy()
     no_snap_part = out[~has_snap].copy()
-    snap_part["_dev_upload_month"] = snap_part["snapshot_date"].dt.to_period("M")
-    snap_part = snap_part[snap_part["_dev_upload_month"] == period].copy()
+    snap_part = _deviations_filter_snapshots_by_upload_months(
+        snap_part, selected_periods
+    )
     if snap_part.empty:
         return out.iloc[0:0].copy()
-
-    if "project name" in snap_part.columns:
-        latest = snap_part.groupby("project name")["snapshot_date"].transform("max")
-        snap_part = snap_part[snap_part["snapshot_date"] == latest]
-    else:
-        max_d = snap_part["snapshot_date"].max()
-        snap_part = snap_part[snap_part["snapshot_date"] == max_d]
-
-    snap_part = snap_part.drop(columns=["_dev_upload_month"], errors="ignore")
     return pd.concat([no_snap_part, snap_part], ignore_index=True)
 
 
 _DEV_TIME_AXIS_PLAN = "По дате окончания плана"
 _DEV_TIME_AXIS_SNAPSHOT = "По дате снимка выгрузки"
+
+_DEVCOMBO_FILTER_RESET_DEFAULTS = {
+    "devcombo_project": "Все",
+    "devcombo_block": "Все",
+    "devcombo_building": "Все",
+    "devcombo_period_month": [],
+    "devcombo_reason": "Все",
+    "devcombo_report_period": "Весь период",
+    "reason_top5": False,
+}
 
 
 def _deviations_period_type_en_from_ru(label: str) -> str:
@@ -6064,10 +6195,12 @@ def _deviations_report_period_options(df: pd.DataFrame, period_type_en: str) -> 
     return sorted(set(labels), key=lambda s: str(s))
 
 
-def _deviations_apply_reason_filter(df: pd.DataFrame) -> pd.DataFrame:
+def _deviations_apply_reason_filter(
+    df: pd.DataFrame, *, session_key: str = "devcombo_reason"
+) -> pd.DataFrame:
     if df is None or getattr(df, "empty", True):
         return df
-    sel = str(st.session_state.get("devcombo_reason", "Все") or "Все").strip()
+    sel = str(st.session_state.get(session_key, "Все") or "Все").strip()
     if sel == "Все" or "reason of deviation" not in df.columns:
         return df
     return df[
@@ -6194,7 +6327,13 @@ def _render_deviations_combined_shared_filters(df):
     use_hierarchy = bool(level_col and task_col and task_col in df.columns)
     use_flat_bs = _deviations_use_flat_block_section_task(df)
 
-    with filters_panel(st, panel_key="deviations_combined", expanded=False, reset_keys=["devcombo_"]):
+    with filters_panel(
+        st,
+        panel_key="deviations_combined",
+        expanded=False,
+        reset_keys=["devcombo_"],
+        reset_defaults=_DEVCOMBO_FILTER_RESET_DEFAULTS,
+    ):
         with filters_selectors(st):
             col1, col2, col3, col4, col5 = st.columns(5, gap="small")
             with col1:
@@ -6269,107 +6408,21 @@ def _render_deviations_combined_shared_filters(df):
                 else:
                     suppress_caption("Нет колонки блока")
             with col3:
-                df_opts = _deviations_project_slice_by_key(df, "devcombo_project")
-                sb = st.session_state.get("devcombo_block", "Все")
-                msp_blk_c3, msp_blk_vals_c3 = _deviations_msp_gantt_style_block_meta(df_opts)
-                msp_bld_c3 = _deviations_msp_gantt_style_building_col(df_opts)
-                d3b = df_opts
-                if (
-                    msp_blk_c3
-                    and msp_blk_vals_c3
-                    and sb != "Все"
-                    and msp_blk_c3 in d3b.columns
-                ):
-                    d3b = d3b[
-                        d3b[msp_blk_c3].astype(str).str.strip() == str(sb).strip()
-                    ].copy()
-                _lc_d3 = level_col if (level_col and level_col in d3b.columns) else ""
-                _tc_d3 = task_col if (task_col and task_col in d3b.columns) else ""
-                _l3_opts_d3 = _deviations_l3_building_option_labels(d3b, _lc_d3, _tc_d3)
-                if _l3_opts_d3:
-                    st.selectbox(
-                        "Строение",
-                        ["Все"] + _l3_opts_d3,
-                        key="devcombo_building",
-                    )
-                elif msp_bld_c3 and msp_bld_c3 in d3b.columns:
-                    build_opts = ["Все"] + sorted(
-                        d3b[msp_bld_c3]
-                        .dropna()
-                        .astype(str)
-                        .str.strip()
-                        .unique()
-                        .tolist()
-                    )
-                    st.selectbox(
-                        "Строение",
-                        build_opts,
-                        key="devcombo_building",
-                    )
-                elif use_hierarchy:
-                    _ln_opts_b = _dev_outline_level_numeric(df_opts[level_col])
-                    _blv_b, _bdv_b = _deviations_msp_tier_levels(_ln_opts_b)
-                    wh = _dev_tasks_build_ancestor_keys(
-                        df_opts.copy(),
-                        level_col,
-                        task_col,
-                        block_outline_level=_blv_b,
-                        building_outline_level=_bdv_b,
-                    )
-                    ln = _dev_outline_level_numeric(wh[level_col])
-                    w3 = wh[ln == _bdv_b]
-                    if sb != "Все":
-                        if (
-                            msp_blk_c3
-                            and msp_blk_vals_c3
-                            and msp_blk_c3 in df_opts.columns
-                        ):
-                            _mask_sb = (
-                                df_opts[msp_blk_c3].astype(str).str.strip()
-                                == str(sb).strip()
-                            )
-                            w3 = w3.loc[
-                                _mask_sb.reindex(w3.index).fillna(False).to_numpy()
-                            ].copy()
-                        else:
-                            w3 = w3[
-                                w3["_dt_lvl2_key"].astype(str).str.strip()
-                                == str(sb).strip()
-                            ]
-                    build_opts = ["Все"] + sorted(
-                        w3[task_col].dropna().astype(str).str.strip().unique().tolist()
-                    )
-                    if len(build_opts) <= 1 and sb != "Все" and "_dt_lvl3_key" in w3.columns:
-                        _k3b = w3["_dt_lvl3_key"].astype(str).str.strip()
-                        _k3b = _k3b[_k3b.ne("") & _k3b.str.lower().ne("nan")]
-                        if len(_k3b):
-                            build_opts = ["Все"] + sorted(pd.unique(_k3b).tolist())
-                    st.selectbox(
-                        "Строение",
-                        build_opts,
-                        key="devcombo_building",
-                    )
-                elif use_flat_bs:
-                    _tc_fb = _deviations_resolve_task_col(df_opts)
-                    _sb_fb = st.session_state.get("devcombo_block", "Все")
-                    _bld_opts = _deviations_flat_building_options(df_opts, _sb_fb, _tc_fb)
-                    st.selectbox(
-                        "Строение",
-                        _bld_opts,
-                        key="devcombo_building",
-                    )
-                elif building_col and building_col in df_opts.columns:
-                    bvals = ["Все"] + sorted(
-                        df_opts[building_col]
-                        .dropna()
-                        .astype(str)
-                        .str.strip()
-                        .unique()
-                        .tolist()
-                    )
-                    st.selectbox("Строение", bvals, key="devcombo_building")
-                else:
-                    suppress_caption("Нет строения")
+                _snap_bld = st.session_state.get("project_data_all_snapshots")
+                _df_bld = (
+                    _snap_bld.copy()
+                    if _snap_bld is not None and not getattr(_snap_bld, "empty", True)
+                    else df.copy()
+                )
+                if _df_bld is not df:
+                    ensure_msp_hierarchy_columns(_df_bld)
+                _bld_opts = _deviations_building_select_options(
+                    _df_bld,
+                    building_col=building_col,
+                )
+                _deviations_render_building_selectbox(
+                    _bld_opts, state_key="devcombo_building"
+                )
     
             _snap_period = st.session_state.get("project_data_all_snapshots")
             _df_period_src = _snap_period if (
@@ -6377,11 +6430,21 @@ def _render_deviations_combined_shared_filters(df):
             ) else df
 
             with col4:
-                _month_opts = _deviations_snapshot_month_options(_df_period_src)
-                if _month_opts:
-                    st.selectbox("Период", _month_opts, key="devcombo_period_month")
-                    suppress_caption(
-                        "Месяц выгрузки MSP на FTP: данные — из файла с крайней датой в выбранном месяце."
+                _month_labels = _deviations_snapshot_month_labels(_df_period_src)
+                if _month_labels:
+                    _deviations_migrate_period_month_multiselect_state(
+                        st, "devcombo_period_month", _month_labels
+                    )
+                    st.multiselect(
+                        "Период",
+                        options=_month_labels,
+                        key="devcombo_period_month",
+                        placeholder="Все месяцы",
+                        help=(
+                            "Месяцы выгрузки MSP на FTP. Пустой выбор — все месяцы; "
+                            "можно отметить несколько — данные из файла с крайней датой "
+                            "в каждом выбранном месяце."
+                        ),
                     )
                 else:
                     suppress_caption("Нет snapshot_date для фильтра периода")
@@ -6631,118 +6694,45 @@ def dashboard_reasons_of_deviation(df, hide_shared_filters=False, building_col=N
                     suppress_caption("Нет колонки блока")
 
             with col3:
-                df_opts = _deviations_project_slice_by_key(df, "reason_project")
-                sb = st.session_state.get("reason_block", "Все")
-                msp_blk_c3r, msp_blk_vals_c3r = _deviations_msp_gantt_style_block_meta(df_opts)
-                msp_bld_c3r = _deviations_msp_gantt_style_building_col(df_opts)
-                d3r = df_opts
-                if (
-                    msp_blk_c3r
-                    and msp_blk_vals_c3r
-                    and sb != "Все"
-                    and msp_blk_c3r in d3r.columns
-                ):
-                    d3r = d3r[
-                        d3r[msp_blk_c3r].astype(str).str.strip() == str(sb).strip()
-                    ].copy()
-                _lc_d3r = _lvl_rs if (_lvl_rs and _lvl_rs in d3r.columns) else ""
-                _tc_d3r = _task_rs if (_task_rs and _task_rs in d3r.columns) else ""
-                _l3_opts_r = _deviations_l3_building_option_labels(d3r, _lc_d3r, _tc_d3r)
-                if _l3_opts_r:
-                    st.selectbox(
-                        "Строение",
-                        ["Все"] + _l3_opts_r,
-                        key="reason_building",
-                    )
-                elif msp_bld_c3r and msp_bld_c3r in d3r.columns:
-                    build_opts = ["Все"] + sorted(
-                        d3r[msp_bld_c3r]
-                        .dropna()
-                        .astype(str)
-                        .str.strip()
-                        .unique()
-                        .tolist()
-                    )
-                    st.selectbox(
-                        "Строение",
-                        build_opts,
-                        key="reason_building",
-                    )
-                elif _use_hi_rs:
-                    _ln_rs_b = _dev_outline_level_numeric(df_opts[_lvl_rs])
-                    _blv_rsb, _bdv_rsb = _deviations_msp_tier_levels(_ln_rs_b)
-                    wh = _dev_tasks_build_ancestor_keys(
-                        df_opts.copy(),
-                        _lvl_rs,
-                        _task_rs,
-                        block_outline_level=_blv_rsb,
-                        building_outline_level=_bdv_rsb,
-                    )
-                    ln = _dev_outline_level_numeric(wh[_lvl_rs])
-                    w3 = wh[ln == _bdv_rsb]
-                    if sb != "Все":
-                        if (
-                            msp_blk_c3r
-                            and msp_blk_vals_c3r
-                            and msp_blk_c3r in df_opts.columns
-                        ):
-                            _mask_sbr = (
-                                df_opts[msp_blk_c3r].astype(str).str.strip()
-                                == str(sb).strip()
-                            )
-                            w3 = w3.loc[
-                                _mask_sbr.reindex(w3.index).fillna(False).to_numpy()
-                            ].copy()
-                        else:
-                            w3 = w3[
-                                w3["_dt_lvl2_key"].astype(str).str.strip()
-                                == str(sb).strip()
-                            ]
-                    build_opts = ["Все"] + sorted(
-                        w3[_task_rs].dropna().astype(str).str.strip().unique().tolist()
-                    )
-                    if len(build_opts) <= 1 and sb != "Все" and "_dt_lvl3_key" in w3.columns:
-                        _k3r = w3["_dt_lvl3_key"].astype(str).str.strip()
-                        _k3r = _k3r[_k3r.ne("") & _k3r.str.lower().ne("nan")]
-                        if len(_k3r):
-                            build_opts = ["Все"] + sorted(pd.unique(_k3r).tolist())
-                    st.selectbox(
-                        "Строение",
-                        build_opts,
-                        key="reason_building",
-                    )
-                elif _use_flat_rs:
-                    _tc_rs = _deviations_resolve_task_col(df_opts)
-                    _sb_rs = st.session_state.get("reason_block", "Все")
-                    _bld_rs = _deviations_flat_building_options(df_opts, _sb_rs, _tc_rs)
-                    st.selectbox(
-                        "Строение",
-                        _bld_rs,
-                        key="reason_building",
-                    )
-                elif building_col and building_col in df_opts.columns:
-                    bvals = ["Все"] + sorted(
-                        df_opts[building_col]
-                        .dropna()
-                        .astype(str)
-                        .str.strip()
-                        .unique()
-                        .tolist()
-                    )
-                    st.selectbox("Строение", bvals, key="reason_building")
-                else:
-                    suppress_caption("Нет строения")
+                _snap_bld_r = st.session_state.get("project_data_all_snapshots")
+                _df_bld_r = (
+                    _snap_bld_r.copy()
+                    if _snap_bld_r is not None and not getattr(_snap_bld_r, "empty", True)
+                    else df.copy()
+                )
+                if _df_bld_r is not df:
+                    ensure_msp_hierarchy_columns(_df_bld_r)
+                _bld_opts_r = _deviations_building_select_options(
+                    _df_bld_r,
+                    project_state_key="reason_project",
+                    block_state_key="reason_block",
+                    period_session_key="reason_period_month",
+                    reason_session_key="reason_reason",
+                    building_col=building_col,
+                )
+                _deviations_render_building_selectbox(
+                    _bld_opts_r, state_key="reason_building"
+                )
 
             with col4:
                 _snap_reason = st.session_state.get("project_data_all_snapshots")
                 _df_reason_period = _snap_reason if (
                     _snap_reason is not None and not getattr(_snap_reason, "empty", True)
                 ) else df
-                _month_opts_r = _deviations_snapshot_month_options(_df_reason_period)
-                if _month_opts_r:
-                    st.selectbox("Период", _month_opts_r, key="reason_period_month")
-                    suppress_caption(
-                        "Месяц выгрузки MSP на FTP: данные — из файла с крайней датой в выбранном месяце."
+                _month_labels_r = _deviations_snapshot_month_labels(_df_reason_period)
+                if _month_labels_r:
+                    _deviations_migrate_period_month_multiselect_state(
+                        st, "reason_period_month", _month_labels_r
+                    )
+                    st.multiselect(
+                        "Период",
+                        options=_month_labels_r,
+                        key="reason_period_month",
+                        placeholder="Все месяцы",
+                        help=(
+                            "Месяцы выгрузки MSP на FTP. Пустой выбор — все месяцы; "
+                            "можно отметить несколько."
+                        ),
                     )
                 else:
                     suppress_caption("Нет snapshot_date для фильтра периода")
