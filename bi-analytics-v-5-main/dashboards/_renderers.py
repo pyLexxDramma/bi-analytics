@@ -39955,6 +39955,166 @@ def _pred_build_status_pie_df(df: pd.DataFrame) -> pd.DataFrame:
     return pd.DataFrame(rows)
 
 
+_PRED_UNRESOLVED_STATUS_BUCKETS = ("Остановка работ", "Критические", "Не устранено")
+
+
+def _pred_status_bucket_series(df: pd.DataFrame) -> pd.Series:
+    """Взаимоисключающая категория строки (как в круговой диаграмме по статусам)."""
+    if df is None or getattr(df, "empty", True):
+        return pd.Series(dtype=object)
+    unres = ~df["_resolved"].astype(bool)
+    stop = unres & df.get("_stop_work", False).astype(bool)
+    crit_only = (
+        unres
+        & df.get("_critical", False).astype(bool)
+        & ~df.get("_stop_work", False).astype(bool)
+    )
+    unres_other = unres & ~stop & ~crit_only
+    od = pd.to_numeric(df.get("_overdue_days", 0), errors="coerce").fillna(0)
+    on_time = df["_resolved"].astype(bool) & (od <= 0)
+    overdue_res = df["_resolved"].astype(bool) & (od > 0)
+    out = pd.Series("Не устранено", index=df.index, dtype=object)
+    out.loc[stop] = "Остановка работ"
+    out.loc[crit_only] = "Критические"
+    out.loc[unres_other] = "Не устранено"
+    out.loc[on_time] = "Сдано в срок"
+    out.loc[overdue_res] = "Устранено с просрочкой"
+    return out
+
+
+def _pred_objects_chart_status_order(*, hide_resolved: bool) -> tuple[str, ...]:
+    if hide_resolved:
+        return _PRED_UNRESOLVED_STATUS_BUCKETS
+    return _PRED_PIE_STATUS_ORDER
+
+
+def _pred_build_by_object_status_df(
+    df: pd.DataFrame, obj_col: str, *, hide_resolved: bool
+) -> pd.DataFrame:
+    if df is None or df.empty or not obj_col or obj_col not in df.columns:
+        return pd.DataFrame()
+    work = df.copy()
+    work["_status_bucket"] = _pred_status_bucket_series(work)
+    if hide_resolved:
+        work = work[~work["_resolved"].astype(bool)]
+    if work.empty:
+        return pd.DataFrame()
+    piv = (
+        work.groupby([obj_col, "_status_bucket"], observed=False)
+        .size()
+        .unstack(fill_value=0)
+    )
+    status_order = _pred_objects_chart_status_order(hide_resolved=hide_resolved)
+    for col in status_order:
+        if col not in piv.columns:
+            piv[col] = 0
+    piv = piv[[c for c in status_order if c in piv.columns]]
+    piv["_total"] = piv.sum(axis=1).astype(int)
+    piv["_sort_name"] = piv.index.astype(str).str.casefold()
+    piv = piv.sort_values(["_total", "_sort_name"], ascending=[False, True], kind="mergesort")
+    piv = piv.drop(columns=["_sort_name"])
+    return piv.reset_index()
+
+
+def _pred_axis_upper_bound(xmax: float) -> float:
+    try:
+        val = float(xmax)
+    except (TypeError, ValueError):
+        return 5.0
+    if not np.isfinite(val) or val <= 0:
+        return 5.0
+    if val <= 5:
+        return 5.0
+    if val <= 10:
+        return 10.0
+    if val <= 25:
+        return float(int(np.ceil(val / 5.0)) * 5)
+    if val <= 100:
+        return float(int(np.ceil(val / 10.0)) * 10)
+    return float(int(np.ceil(val / 25.0)) * 25)
+
+
+def _pred_objects_by_status_figure(
+    piv: pd.DataFrame,
+    obj_col: str,
+    *,
+    hide_resolved: bool,
+) -> go.Figure:
+    if piv is None or piv.empty or not obj_col or obj_col not in piv.columns:
+        return go.Figure()
+    obj_labels = piv[obj_col].astype(str).tolist()
+    status_order = _pred_objects_chart_status_order(hide_resolved=hide_resolved)
+    fig = go.Figure()
+    for status in status_order:
+        if status not in piv.columns:
+            continue
+        vals = pd.to_numeric(piv[status], errors="coerce").fillna(0).astype(int).tolist()
+        texts = [str(v) if v > 0 else "" for v in vals]
+        fig.add_trace(
+            go.Bar(
+                x=obj_labels,
+                y=vals,
+                name=status,
+                marker=dict(color=_pred_status_chart_color(status)),
+                text=texts,
+                textposition="inside",
+                insidetextanchor="middle",
+                textfont=dict(color="#ffffff", size=13, family="Inter, Arial, sans-serif"),
+                hovertemplate=f"<b>%{{x}}</b><br>{status}: %{{y}}<extra></extra>",
+            )
+        )
+    for _, row in piv.iterrows():
+        total = int(row.get("_total", 0) or 0)
+        if total <= 0:
+            continue
+        fig.add_annotation(
+            x=str(row[obj_col]),
+            y=float(total),
+            text=f"<b>{total}</b>",
+            showarrow=False,
+            xref="x",
+            yref="y",
+            xanchor="center",
+            yanchor="bottom",
+            yshift=14,
+            font=dict(color=_fin_chart_label_color(), size=16, family="Inter, Arial, sans-serif"),
+        )
+    _n_obj = len(piv.index)
+    _obj_gaps = _plotly_bargaps_sparse_x_like_gdrs(_n_obj)
+    ymax = float(pd.to_numeric(piv["_total"], errors="coerce").fillna(0).max() or 0)
+    axis_upper = _pred_axis_upper_bound(ymax) if ymax > 0 else 5.0
+    fig.update_layout(
+        barmode="stack",
+        height=470,
+        xaxis_title="",
+        yaxis_title="Количество",
+        showlegend=True,
+        legend=dict(
+            orientation="h",
+            yanchor="top",
+            y=-0.18,
+            xanchor="center",
+            x=0.5,
+            font=dict(size=12, color=_fin_chart_label_color()),
+        ),
+        uirevision=f"pred_by_obj_v2_{int(hide_resolved)}",
+        xaxis=dict(
+            fixedrange=True,
+            categoryorder="array",
+            categoryarray=obj_labels,
+            tickangle=0,
+            tickfont=dict(size=16, color=_fin_chart_label_color()),
+        ),
+        yaxis=dict(fixedrange=True, range=[0, axis_upper * 1.12]),
+        margin=dict(l=56, r=36, t=64, b=110),
+        **_obj_gaps,
+    )
+    fig.update_traces(width=max(0.08, 0.46 / 5), selector=dict(type="bar"))
+    fig.update_layout(uniformtext=dict(minsize=9, mode="hide"))
+    fig = _apply_finance_bar_label_layout(fig)
+    return fig
+
+
 def _pred_fmt_days_display(val) -> str:
     """Дни просрочки: просрочка — −N; сдано в срок раньше — положительная разница (срок − факт)."""
     if val is None or (isinstance(val, float) and pd.isna(val)):
@@ -40517,6 +40677,21 @@ def _pred_status_pie_color(status_label: str) -> str:
     return "#94a3b8"
 
 
+# Палитра сегментов графика «Предписания по объектам» — строго по макету
+# KPI-кружков (см. `.pred-kpi-circle.*`): бордовый/красный/оранжевый/зелёный + янтарь.
+_PRED_STATUS_CHART_COLOR = {
+    "Остановка работ": "#922b3e",
+    "Критические": "#e74c3c",
+    "Не устранено": "#e67e22",
+    "Сдано в срок": "#2ecc71",
+    "Устранено с просрочкой": "#f1c40f",
+}
+
+
+def _pred_status_chart_color(status_label: str) -> str:
+    return _PRED_STATUS_CHART_COLOR.get(str(status_label).strip(), _pred_status_pie_color(status_label))
+
+
 def _pred_crit_overdue_unresolved_mask(df: pd.DataFrame) -> pd.Series:
     """Критические + просроченные + неустранённые (для сортировки таблицы и графика)."""
     if df is None or getattr(df, "empty", True):
@@ -40894,11 +41069,16 @@ def _pred_detail_table_html(
         "margin-top: 8px; margin-bottom: 12px; "
         f"border: 1px solid {_border}; border-radius: 10px; box-sizing: border-box; }}",
         f"#{_wrap_id} .budget-table-scroll.pred-detail-scroll {{ height: {_st_box_h}px !important; "
-        f"max-height: {_st_box_h}px !important; min-height: 0; overflow: auto; "
+        f"max-height: {_st_box_h}px !important; min-height: 0; overflow-x: auto; overflow-y: auto; "
         "-webkit-overflow-scrolling: touch; scrollbar-gutter: stable; box-sizing: border-box; "
         "padding-bottom: 14px; scroll-padding-bottom: 14px; "
         "border: none; border-radius: 0; scrollbar-width: thin; "
         f"scrollbar-color: {_sb}; }}",
+        f"#{_wrap_id} .budget-table-scroll.pred-detail-scroll::-webkit-scrollbar {{ width: 10px; height: 10px; }}",
+        f"#{_wrap_id} .budget-table-scroll.pred-detail-scroll::-webkit-scrollbar-thumb {{ "
+        f"background: {'#94a3b8' if _light_tbl else '#4a5568'}; border-radius: 6px; }}",
+        f"#{_wrap_id} .budget-table-scroll.pred-detail-scroll::-webkit-scrollbar-track {{ "
+        f"background: {'#e5e7eb' if _light_tbl else '#1a1c23'}; }}",
         f"#{_wrap_id} .pred-detail-scroll thead th {{ position: sticky; top: 0; z-index: 5; }}",
         f"#{_wrap_id} .pred-detail-scroll tbody tr.pred-scroll-tail td {{ "
         "height: 14px; padding: 0; border: none !important; background: transparent !important; "
@@ -43325,23 +43505,6 @@ def dashboard_predpisania(df):
         ("приостановка работ",),
     ) & _kind_ok
 
-    def _pred_axis_upper_bound(xmax: float) -> float:
-        try:
-            val = float(xmax)
-        except (TypeError, ValueError):
-            return 5.0
-        if not np.isfinite(val) or val <= 0:
-            return 5.0
-        if val <= 5:
-            return 5.0
-        if val <= 10:
-            return 10.0
-        if val <= 25:
-            return float(int(np.ceil(val / 5.0)) * 5)
-        if val <= 100:
-            return float(int(np.ceil(val / 10.0)) * 10)
-        return float(int(np.ceil(val / 25.0)) * 25)
-
     if not st.session_state.get("_pred_filters_align_css_once"):
         st.markdown(_PRED_FILTERS_ROW_CSS, unsafe_allow_html=True)
         st.session_state["_pred_filters_align_css_once"] = True
@@ -43806,7 +43969,7 @@ def dashboard_predpisania(df):
             "«Критические» и «Остановка работ» — неустранённые с тегом в Tessa_Teg (TESSA): «КРИТИЧНЫЙ» / «Приостановка работ». "
         )
 
-    status_df = _pred_build_status_pie_df(filtered)
+    status_df = _pred_build_status_pie_df(chart_df)
     st.subheader("Предписания по статусам")
     if status_df.empty:
         st.info("Нет данных для круговой диаграммы по статусам.")
@@ -43850,56 +44013,27 @@ def dashboard_predpisania(df):
 
     if obj_col and obj_col in chart_df.columns:
         st.subheader("Предписания по объектам")
-        by_obj = (
-            chart_df.groupby(obj_col)
-            .size()
-            .reset_index(name="Количество")
+        by_obj_status = _pred_build_by_object_status_df(
+            chart_df, obj_col, hide_resolved=hide_resolved
         )
-        # R23-10: детерминированная сортировка объектов (убывание количества, затем алфавит).
-        by_obj["_sort_name"] = by_obj[obj_col].astype(str).str.casefold()
-        by_obj = by_obj.sort_values(
-            ["Количество", "_sort_name"],
-            ascending=[False, True],
-            kind="mergesort",
-        ).drop(columns=["_sort_name"]).reset_index(drop=True)
-        fig3 = go.Figure()
-        fig3.add_trace(
-            go.Bar(
-                x=by_obj[obj_col].astype(str).tolist(),
-                y=by_obj["Количество"].tolist(),
-                text=[str(int(v)) for v in by_obj["Количество"]],
-                textposition="inside",
-                insidetextanchor="middle",
-                textfont=dict(size=22, color="#ffffff", family="Inter, Arial, sans-serif"),
-                marker=dict(color="#06A77D"),
-                hovertemplate="<b>%{x}</b><br>Количество: %{y}<extra></extra>",
+        if by_obj_status.empty:
+            if hide_resolved:
+                st.info("Нет неустранённых предписаний по объектам при текущих фильтрах.")
+            else:
+                st.info("Нет данных для диаграммы по объектам.")
+        else:
+            fig3 = _pred_objects_by_status_figure(
+                by_obj_status, obj_col, hide_resolved=hide_resolved
             )
-        )
-        fig3 = _apply_finance_bar_label_layout(fig3)
-        fig3 = apply_chart_background(fig3)
-        _n_obj = len(by_obj.index)
-        _obj_gaps = _plotly_bargaps_sparse_x_like_gdrs(_n_obj)
-        fig3.update_traces(width=max(0.08, 0.46 / 5), selector=dict(type="bar"))
-        fig3.update_layout(
-            height=450,
-            xaxis_title="",
-            yaxis_title="Количество",
-            uirevision="pred_by_obj",
-            xaxis=dict(
-                fixedrange=True,
-                categoryorder="array",
-                categoryarray=by_obj[obj_col].tolist(),
-                tickangle=0,
-                tickfont=dict(size=16, color=_fin_chart_label_color()),
-            ),
-            yaxis=dict(fixedrange=True),
-            margin=dict(l=56, r=36, t=72, b=72),
-            **_obj_gaps,
-        )
-        render_chart(fig3, key="pred_by_obj", caption_below=report_chart_caption_body("Предписания", granularity="по объектам"))
+            fig3 = apply_chart_background(fig3)
+            render_chart(
+                fig3,
+                key=f"pred_by_obj_{int(hide_resolved)}",
+                caption_below=report_chart_caption_body("Предписания", granularity="по объектам"),
+            )
 
     st.subheader("Детальная таблица по предписаниям")
-    show = filtered.copy()
+    show = chart_df.copy()
     show = show.sort_values(
         ["_crit_overdue_open", "_overdue_days"],
         ascending=[False, False],
@@ -43927,10 +44061,11 @@ def dashboard_predpisania(df):
         kind="mergesort",
     )
 
-    overdue_cnt = n_overdue
+    overdue_cnt = int((~show["_resolved"].astype(bool) & (show["_overdue_days"] > 0)).sum())
+    n_non_overdue_show = int((show["_overdue_days"] <= 0).sum())
     suppress_caption(
         f"Записей: {len(table_df)} · просроченных: {overdue_cnt} · "
-        f"непросроченных: {n_non_overdue} · устраненных: {int(show['_resolved'].sum())}"
+        f"непросроченных: {n_non_overdue_show} · устраненных: {int(show['_resolved'].sum())}"
     )
     render_report_html_table(
         _pred_html_block_for_theme(_pred_detail_table_html(table_df)),
