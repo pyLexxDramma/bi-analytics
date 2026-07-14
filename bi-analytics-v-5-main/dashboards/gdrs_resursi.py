@@ -2708,28 +2708,87 @@ def _gdrs_calendar_week_bucket_start(day: pd.Timestamp, month_lo: pd.Timestamp) 
     return pd.Timestamp(lo.year, lo.month, start_day)
 
 
+def _gdrs_dynamics_month_lo_for_day(day: pd.Timestamp) -> pd.Timestamp:
+    d = pd.Timestamp(day).normalize()
+    return pd.Timestamp(d.year, d.month, 1)
+
+
+def _gdrs_bucket_calendar_week_num(
+    bucket_start: pd.Timestamp,
+    *,
+    date_from: Optional[pd.Timestamp] = None,
+    date_to: Optional[pd.Timestamp] = None,
+) -> Optional[int]:
+    """Номер календарной недели месяца (1–6) для bucket/дня."""
+    b = pd.Timestamp(bucket_start).normalize()
+    lo = pd.Timestamp(date_from).normalize() if date_from is not None else None
+    hi = pd.Timestamp(date_to).normalize() if date_to is not None else None
+    if lo is not None and hi is not None and _gdrs_single_calendar_month(lo, hi):
+        return _gdrs_calendar_week_num(b, lo)
+    return _gdrs_calendar_week_num(b, _gdrs_dynamics_month_lo_for_day(b))
+
+
+def _gdrs_day_matches_week_filter(
+    day: pd.Timestamp,
+    bucket: pd.Timestamp,
+    agg_kind: str,
+    week_num: int,
+    date_from: pd.Timestamp,
+    date_to: pd.Timestamp,
+) -> bool:
+    """День попадает в выбранную N-ю неделю месяца (фильтры План/СКУД)."""
+    d = pd.Timestamp(day).normalize()
+    b = pd.Timestamp(bucket).normalize()
+    kind = str(agg_kind or "").strip().casefold()
+    month_lo = _gdrs_dynamics_month_lo_for_day(d if kind == "день" else b)
+    if _gdrs_calendar_week_num(d, month_lo) != int(week_num):
+        return False
+    if kind == "неделя":
+        week_end = b + pd.Timedelta(days=6)
+        return d >= b and d <= week_end
+    return True
+
+
+def _gdrs_dynamics_week_filter_suffix(
+    plan_agg: str,
+    skud_agg: str,
+) -> str:
+    """Суффикс подписи периода при фильтре по неделе."""
+    pw = gdrs_agg_week_num(plan_agg)
+    sw = gdrs_agg_week_num(skud_agg)
+    if pw is None and sw is None:
+        return ""
+    if pw is not None and sw is not None and pw != sw:
+        return f" · пн{pw}/сн{sw}"
+    wn = pw if pw is not None else sw
+    return f" · н{wn}"
+
+
 def gdrs_dynamics_bucket_display_label(
     bucket_start: pd.Timestamp,
     agg_kind: str,
     *,
     date_from: Optional[pd.Timestamp] = None,
     date_to: Optional[pd.Timestamp] = None,
+    plan_agg: str = "month_avg",
+    skud_agg: str = "month_avg",
 ) -> str:
     """Подпись bucket для оси X (неделя — не dd.mm как «день»)."""
     b = pd.Timestamp(bucket_start).normalize()
     kind = str(agg_kind or "").strip().casefold()
     lo = pd.Timestamp(date_from).normalize() if date_from is not None else None
     hi = pd.Timestamp(date_to).normalize() if date_to is not None else None
+    _wk_suffix = _gdrs_dynamics_week_filter_suffix(plan_agg, skud_agg)
     if kind == "неделя":
         if lo is not None and hi is not None and _gdrs_single_calendar_month(lo, hi):
             wn = _gdrs_calendar_week_num(b, lo)
-            return f"н{wn} · {b.strftime('%m.%Y')}"
+            return f"н{wn} · {b.strftime('%m.%Y')}{_wk_suffix}"
         w_end = b + pd.Timedelta(days=6)
         if hi is not None:
             w_end = min(w_end, hi)
-        return f"{b.strftime('%d.%m')}–{w_end.strftime('%d.%m.%y')}"
+        return f"{b.strftime('%d.%m')}–{w_end.strftime('%d.%m.%y')}{_wk_suffix}"
     if kind == "месяц":
-        return b.strftime("%m.%Y")
+        return b.strftime("%m.%Y") + _wk_suffix
     if kind == "год":
         return str(b.year)
     return b.strftime("%d.%m.%Y")
@@ -2898,10 +2957,13 @@ def gdrs_dynamics_build_series(
     plan_aggregate_loader=None,
     month_periods: Optional[Iterable[pd.Period]] = None,
     term_index: Optional[GdrsTerminationIndex] = None,
+    plan_agg: str = "month_avg",
+    skud_agg: str = "month_avg",
 ) -> pd.DataFrame:
     """Факт по периодам + план из 1С на конец каждого периода; сетка по всему диапазону фильтра.
 
     plan_aggregate_loader: optional (snapshot_date) -> plan_df; для кэширования в Streamlit.
+    plan_agg / skud_agg — те же ключи, что в фильтрах «План» / «СКУД» (month_avg или week:N).
     """
     _load_plan = plan_aggregate_loader
     if _load_plan is None:
@@ -2917,10 +2979,38 @@ def gdrs_dynamics_build_series(
     )
     f2["_day"] = f2["date"].dt.normalize()
 
+    plan_wn = gdrs_agg_week_num(plan_agg)
+    skud_wn = gdrs_agg_week_num(skud_agg)
+    _agg_cf = str(agg_kind or "").strip().casefold()
+
     daily_totals = (
         f2.groupby(["bucket", "_day"], as_index=False)["fact"]
         .sum()
     )
+    if skud_wn is not None:
+        if _agg_cf == "неделя":
+            daily_totals = daily_totals[
+                daily_totals["bucket"].map(
+                    lambda b: _gdrs_bucket_calendar_week_num(
+                        b, date_from=dyn_from, date_to=dyn_to
+                    )
+                    == skud_wn
+                )
+            ]
+        else:
+            daily_totals = daily_totals[
+                daily_totals.apply(
+                    lambda r: _gdrs_day_matches_week_filter(
+                        r["_day"],
+                        r["bucket"],
+                        agg_kind,
+                        skud_wn,
+                        dyn_from,
+                        dyn_to,
+                    ),
+                    axis=1,
+                )
+            ]
     agg = (
         daily_totals.groupby("bucket", as_index=False)["fact"]
         .mean()
@@ -2935,7 +3025,14 @@ def gdrs_dynamics_build_series(
     dyn = grid.merge(agg[["bucket", "Факт"]], on="bucket", how="left")
     dyn["Факт"] = dyn["Факт"].fillna(0).astype(int)
     dyn["x_label"] = [
-        gdrs_dynamics_bucket_display_label(b, agg_kind, date_from=dyn_from, date_to=dyn_to)
+        gdrs_dynamics_bucket_display_label(
+            b,
+            agg_kind,
+            date_from=dyn_from,
+            date_to=dyn_to,
+            plan_agg=plan_agg,
+            skud_agg=skud_agg,
+        )
         for b in dyn["bucket"]
     ]
     dyn["Период"] = dyn["x_label"]
@@ -2944,8 +3041,43 @@ def gdrs_dynamics_build_series(
     plan_cache: dict = {}
     plans: list[int] = []
     for bkt in dyn["bucket"]:
+        if plan_wn is not None and _agg_cf == "неделя":
+            _bwn = _gdrs_bucket_calendar_week_num(
+                bkt, date_from=dyn_from, date_to=dyn_to
+            )
+            if _bwn != plan_wn:
+                plans.append(0)
+                continue
         day_plan_vals: list[float] = []
-        for day in _gdrs_bucket_calendar_days(bkt, agg_kind, dyn_from, dyn_to):
+        _plan_days = _gdrs_bucket_calendar_days(bkt, agg_kind, dyn_from, dyn_to)
+        if plan_wn is not None and _agg_cf != "неделя":
+            _plan_days = [
+                d
+                for d in _plan_days
+                if _gdrs_day_matches_week_filter(
+                    d, bkt, agg_kind, plan_wn, dyn_from, dyn_to
+                )
+            ]
+        if plan_wn is not None and _agg_cf == "месяц":
+            month_lo = pd.Timestamp(bkt).normalize()
+            month_hi = min(
+                (month_lo + pd.offsets.MonthEnd(0)).normalize(),
+                dyn_to,
+            )
+            month_lo = max(month_lo, dyn_from)
+            snap = gdrs_week_period_end(month_lo, month_hi, plan_wn)
+            if snap is None or not pd.notna(snap):
+                plans.append(0)
+                continue
+            sk = pd.Timestamp(snap).normalize()
+            if sk not in plan_cache:
+                plan_df = _load_plan(sk)
+                plan_cache[sk] = _build_plan_lookup(plan_df, plan_col)
+            plans.append(int(gdrs_plan_sum_for_pairs(
+                pairs, *plan_cache[sk], as_of_date=sk, term_index=term_index,
+            )))
+            continue
+        for day in _plan_days:
             snap = gdrs_dynamics_bucket_snapshot_end(
                 day, "День", dyn_to, date_from=dyn_from, date_to=dyn_to
             )

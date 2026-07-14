@@ -1317,6 +1317,15 @@ def apply_gdrs_chart_background(fig: Any, theme: GdrsTheme, *, skip_uniformtext:
     showlegend = getattr(layout, "showlegend", True) if layout is not None else True
 
     is_pie = _fig_has_pie_trace(fig)
+    _fig_w = getattr(layout, "width", None) if layout is not None else None
+    _fig_h = getattr(layout, "height", None) if layout is not None else None
+    _pie_fixed_size = (
+        is_pie
+        and _fig_w is not None
+        and _fig_h is not None
+        and float(_fig_w) > 0
+        and float(_fig_h) > 0
+    )
     if is_pie:
         leg_out = standard_pie_chart_legend(**legend_kwargs)
         if prev_leg is not None:
@@ -1326,7 +1335,7 @@ def apply_gdrs_chart_background(fig: Any, theme: GdrsTheme, *, skip_uniformtext:
                     leg_out["y"] = float(py)
             except (TypeError, ValueError):
                 pass
-        if margin_t > 60:
+        if margin_t > 60 and not _pie_fixed_size:
             margin_t = max(44.0, min(margin_t, 56.0))
     elif showlegend:
         n_leg = _fig_legend_trace_count(fig)
@@ -1348,7 +1357,7 @@ def apply_gdrs_chart_background(fig: Any, theme: GdrsTheme, *, skip_uniformtext:
         template=None,
         plot_bgcolor=theme.chart_bg,
         paper_bgcolor=theme.chart_bg,
-        autosize=True,
+        autosize=not _pie_fixed_size,
         font=dict(
             family="Inter, system-ui, sans-serif",
             color=theme.text,
@@ -1363,6 +1372,9 @@ def apply_gdrs_chart_background(fig: Any, theme: GdrsTheme, *, skip_uniformtext:
         legend=leg_out,
         showlegend=bool(showlegend),
     )
+    if _pie_fixed_size:
+        layout_kwargs["width"] = float(_fig_w)
+        layout_kwargs["height"] = float(_fig_h)
     if not skip_uniformtext:
         layout_kwargs["uniformtext"] = dict(minsize=CHART_UNIFORMTEXT_MINSIZE, mode="show")
     fig.update_layout(**layout_kwargs)
@@ -1374,23 +1386,24 @@ def apply_gdrs_chart_background(fig: Any, theme: GdrsTheme, *, skip_uniformtext:
             fig.update_traces(hoverinfo="skip")
         except Exception:
             pass
-    fig.update_xaxes(
-        gridcolor=theme.chart_grid,
-        linecolor=theme.chart_axis,
-        tickfont=dict(color=theme.text, size=CHART_AXIS_TICK_FONT_SIZE),
-        title=dict(font=dict(color=theme.text, size=CHART_AXIS_TITLE_FONT_SIZE)),
-        zerolinecolor=theme.chart_axis,
-        automargin=True,
-        ticklabelstandoff=8,
-    )
-    fig.update_yaxes(
-        gridcolor=theme.chart_grid,
-        linecolor=theme.chart_axis,
-        tickfont=dict(color=theme.text, size=CHART_AXIS_TICK_FONT_SIZE),
-        title=dict(font=dict(color=theme.text, size=CHART_AXIS_TITLE_FONT_SIZE)),
-        zerolinecolor=theme.chart_axis,
-        automargin=True,
-    )
+    if not is_pie:
+        fig.update_xaxes(
+            gridcolor=theme.chart_grid,
+            linecolor=theme.chart_axis,
+            tickfont=dict(color=theme.text, size=CHART_AXIS_TICK_FONT_SIZE),
+            title=dict(font=dict(color=theme.text, size=CHART_AXIS_TITLE_FONT_SIZE)),
+            zerolinecolor=theme.chart_axis,
+            automargin=True,
+            ticklabelstandoff=8,
+        )
+        fig.update_yaxes(
+            gridcolor=theme.chart_grid,
+            linecolor=theme.chart_axis,
+            tickfont=dict(color=theme.text, size=CHART_AXIS_TICK_FONT_SIZE),
+            title=dict(font=dict(color=theme.text, size=CHART_AXIS_TITLE_FONT_SIZE)),
+            zerolinecolor=theme.chart_axis,
+            automargin=True,
+        )
     return fig
 
 

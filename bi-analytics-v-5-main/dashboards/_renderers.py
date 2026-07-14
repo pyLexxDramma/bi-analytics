@@ -3654,21 +3654,34 @@ def _gdrs_pie_contractors_figure(pie_df: pd.DataFrame, *, theme: str = "dark") -
             slice_pull.append(0.05 if frac < 0.03 else 0.03)
             _has_outside = True
     _labels = df["Контрагент"].astype(str).tolist()
-    _scale = 2.0
-    _canvas = int((1100 if theme == "light" else 1000) * _scale)
-    _legend_fs = int(CHART_LEGEND_FONT_SIZE * _scale)
-    _txt_in = int(max(15, min(21, 23 - n // 2)) * _scale)
-    _txt_out = int(max(13, min(21, 23 - n // 2) - 1) * _scale)
+    _ui_scale = 1.5
+    _base_txt = max(15, min(21, 23 - n // 2))
+    _txt_in = int(_base_txt * _ui_scale)
+    _txt_out = int((_base_txt - 1) * _ui_scale)
+    _legend_fs = int(CHART_LEGEND_FONT_SIZE * 1.05)
     _pie_layout = pie_layout_for_bottom_legend(
         n,
         font_size=_legend_fs,
         items_per_row=4,
         outside_labels=_has_outside,
     )
-    _b_margin = int(_pie_layout["margin_bottom"] * _scale)
-    _fig_h = int((520 + int(_pie_layout["fig_extra_h"]) + (40 if _has_outside else 0)) * _scale)
-    _dx = _pie_layout["domain_x"]
-    _dy = _pie_layout["domain_y"]
+    _legend_h = int(_pie_layout["margin_bottom"])
+    # Фикс. квадратный холст → домен круга квадратный в пикселях → идеально ровный круг.
+    _label_pad = int(_txt_out * 2.0) if _has_outside else int(_txt_out * 0.8)
+    _top_pad = int(_txt_out * 2.2)
+    _gap = int(_txt_out * 0.6)
+    _circle = 860
+    _canvas = _circle + 2 * _label_pad
+    _fig_h = _top_pad + _circle + _gap + _legend_h
+    _cx = _canvas / 2.0
+    _x0 = (_cx - _circle / 2.0) / _canvas
+    _x1 = (_cx + _circle / 2.0) / _canvas
+    _y_top_px = _fig_h - _top_pad
+    _y_bot_px = _fig_h - _top_pad - _circle
+    _y0 = _y_bot_px / _fig_h
+    _y1 = _y_top_px / _fig_h
+    _dx = (_x0, _x1)
+    _dy = (_y0, _y1)
     fig = go.Figure(
         data=[
             go.Pie(
@@ -3688,31 +3701,46 @@ def _gdrs_pie_contractors_figure(pie_df: pd.DataFrame, *, theme: str = "dark") -
                 ),
                 marker=dict(line=dict(color=_th.pie_line, width=1)),
                 hole=0.28,
-                automargin=True,
+                automargin=False,
+                domain=dict(x=list(_dx), y=list(_dy)),
             )
         ]
     )
     fig.update_layout(
-        width=_canvas,
-        height=_fig_h,
-        uniformtext=dict(minsize=int(10 * _scale), mode="show"),
-        legend=standard_pie_chart_legend(
-            font=dict(size=_legend_fs, color=_th.pie_legend),
-            y=_pie_layout["legend_y"],
-            itemsizing="constant",
-        ),
-        margin=dict(l=int(56 * _scale), r=int(56 * _scale), t=int(_pie_layout["margin_top"] * _scale), b=_b_margin),
+        uniformtext=dict(minsize=int(10 * _ui_scale), mode="show"),
         showlegend=True,
         plot_bgcolor=_th.chart_bg,
         paper_bgcolor=_th.chart_bg,
     )
-    try:
-        fig.update_traces(domain=dict(x=list(_dx), y=list(_dy)))
-    except Exception:
-        pass
     from dashboards.gdrs_theme import apply_gdrs_chart_background
 
-    return apply_gdrs_chart_background(fig, _th, skip_uniformtext=True)
+    fig = apply_gdrs_chart_background(fig, _th, skip_uniformtext=True)
+    # Форсируем точную геометрию после apply_gdrs_chart_background (иначе он ставит
+    # свои дефолтные margin/legend и круг снова «уплывает»). Фиксируем ширину и высоту:
+    # квадратный домен в пикселях гарантирует идеально ровный круг.
+    fig.update_layout(
+        width=_canvas,
+        height=_fig_h,
+        autosize=False,
+        margin=dict(l=0, r=0, t=0, b=0),
+        legend=dict(
+            orientation="h",
+            x=0.5,
+            xanchor="center",
+            y=_y0,
+            yanchor="top",
+            font=dict(size=_legend_fs, color=_th.pie_legend),
+            itemsizing="constant",
+            bgcolor="rgba(0,0,0,0)",
+            title_text="",
+        ),
+    )
+    fig.update_traces(
+        selector=dict(type="pie"),
+        domain=dict(x=list(_dx), y=list(_dy)),
+        automargin=False,
+    )
+    return fig
 
 
 def _apply_pie_layout(fig: go.Figure, *, height: int = 460) -> go.Figure:
@@ -25549,6 +25577,56 @@ def _gdrs_dyn_panel_dtick(
     return float(min(_step, _cap))
 
 
+def _gdrs_dyn_point_label_indices(
+    n_pts: int,
+    agg_cf: str,
+    *,
+    sparse: bool = True,
+) -> set[int]:
+    """Индексы точек с подписями. sparse=False — все точки (широкий график со скроллом)."""
+    if n_pts <= 0:
+        return set()
+    if not sparse:
+        return set(range(n_pts))
+    cf = str(agg_cf or "").casefold()
+    if cf == "день":
+        if n_pts > 24:
+            step = 5
+        elif n_pts > 16:
+            step = 4
+        elif n_pts > 10:
+            step = 3
+        elif n_pts > 6:
+            step = 2
+        else:
+            step = 1
+    elif cf == "неделя" and n_pts > 8:
+        step = 2
+    else:
+        step = 1
+    show = {i for i in range(0, n_pts, step)}
+    show.add(n_pts - 1)
+    return show
+
+
+def _gdrs_dyn_plan_label_indices(n_pts: int, values) -> set[int]:
+    """Подписи плана — только при смене значения (+ первая/последняя точка)."""
+    show: set[int] = set()
+    if n_pts <= 0:
+        return show
+    prev = None
+    for i, v in enumerate(values):
+        if v is None or (isinstance(v, float) and np.isnan(v)) or float(v) <= 0:
+            continue
+        iv = int(round(float(v)))
+        if prev is None or iv != prev:
+            show.add(i)
+        prev = iv
+    show.add(0)
+    show.add(n_pts - 1)
+    return show
+
+
 def _gdrs_dyn_panel_y_range(series, agg_kind: str) -> list[float]:
     """Узкий диапазон Y вокруг min/max — чтобы была видна динамика, не «пол» 0…max."""
     _agg = str(agg_kind or "").casefold()
@@ -25570,11 +25648,17 @@ def _gdrs_dynamics_chart_panel(
     month_periods: list | None = None,
     term_index=None,
     *,
+    plan_agg: str = "month_avg",
+    skud_agg: str = "month_avg",
     theme: str = "dark",
 ):
     """Линейный график динамики — fragment: смена группировки без полной перезагрузки страницы."""
     import plotly.graph_objects as _go
-    from dashboards.gdrs_resursi import gdrs_dynamics_build_series
+    from dashboards.gdrs_resursi import (
+        gdrs_dynamics_build_series,
+        gdrs_agg_week_num,
+        GDRS_AGG_LABELS,
+    )
     from dashboards.gdrs_theme import (
         apply_gdrs_chart_background,
         get_gdrs_theme,
@@ -25600,11 +25684,21 @@ def _gdrs_dynamics_chart_panel(
         "Группировка", _agg_options, horizontal=True,
         key=_agg_key,
     )
+    _plan_wn = gdrs_agg_week_num(plan_agg)
+    _skud_wn = gdrs_agg_week_num(skud_agg)
+    _wk_note = ""
+    if _plan_wn is not None or _skud_wn is not None:
+        _parts = []
+        if _plan_wn is not None:
+            _parts.append(f"план — **{GDRS_AGG_LABELS.get(f'week:{_plan_wn}', f'{_plan_wn} неделя')}**")
+        if _skud_wn is not None:
+            _parts.append(f"факт — **{GDRS_AGG_LABELS.get(f'week:{_skud_wn}', f'{_skud_wn} неделя')}**")
+        _wk_note = " Фильтры «План»/«СКУД»: " + ", ".join(_parts) + "."
     st.caption(
         f"По всем загруженным датам: **{dyn_from.strftime('%d.%m.%Y')} — "
         f"{dyn_to.strftime('%d.%m.%Y')}** "
         f"(по выбранным месяцам в фильтре «Месяц»). "
-        f"План и факт — **среднее за день** в выбранном периоде группировки."
+        f"План и факт — **среднее за день** в выбранном периоде группировки.{_wk_note}"
     )
     uniq_pairs = fact_dyn[
         ["project_id", "project_name", "contractor_id", "contractor_name"]
@@ -25616,6 +25710,8 @@ def _gdrs_dynamics_chart_panel(
             plan_aggregate_loader=_gdrs_plan_loader(version_id, db_mtime),
             month_periods=month_periods,
             term_index=term_index,
+            plan_agg=plan_agg,
+            skud_agg=skud_agg,
         )
     if len(dyn) < 2:
         st.warning(
@@ -25657,7 +25753,7 @@ def _gdrs_dynamics_chart_panel(
             for f, p in zip(_fact_s, _plan_s)
         ]
         _n_pts = len(dyn)
-        _dyn_fs = 1.0 if _agg_cf == "неделя" else 1.5
+        _dyn_fs = (1.0 if _agg_cf == "неделя" else 1.5) * 1.5
         _dyn_sz = lambda base: max(8, int(round(float(base) * _dyn_fs)))
         _lbl_sz = _dyn_sz(10 if _n_pts <= 12 else (9 if _n_pts <= 20 else 8))
         _ann_sz = _dyn_sz(9 if _n_pts <= 12 else 8)
@@ -25674,6 +25770,12 @@ def _gdrs_dynamics_chart_panel(
             _comb_range[0], _comb_range[1], agg_kind, series_kind="fact"
         )
 
+        _dyn_hscroll = _agg_cf == "день" and _n_pts > 10
+        _plan_label_idx = _gdrs_dyn_plan_label_indices(_n_pts, _plan_plot.tolist())
+        _fact_label_idx = _gdrs_dyn_point_label_indices(
+            _n_pts, _agg_cf, sparse=not _dyn_hscroll
+        )
+
         fig = _go.Figure()
         fig.add_trace(
             _go.Scatter(
@@ -25685,8 +25787,10 @@ def _gdrs_dynamics_chart_panel(
                 name="План",
                 connectgaps=False,
                 text=[
-                    f"{int(v)}" if pd.notna(v) and float(v) > 0 else ""
-                    for v in _plan_plot
+                    f"{int(v)}"
+                    if pd.notna(v) and float(v) > 0 and i in _plan_label_idx
+                    else ""
+                    for i, v in enumerate(_plan_plot)
                 ],
                 textposition="top center",
                 textfont=dict(color=_th.line_plan, size=_lbl_sz),
@@ -25711,12 +25815,17 @@ def _gdrs_dynamics_chart_panel(
             )
         )
         if _n_pts <= 14 or _agg_cf != "неделя":
-            for _xb, _f, _p in zip(_x, dyn["Факт"], dyn["План"]):
-                _pct_color = _th.good if int(_p) > 0 and float(_f) >= float(_p) else _th.bad
+            for i, (_xb, _f, _p) in enumerate(zip(_x, dyn["Факт"], dyn["План"])):
+                if i not in _fact_label_idx:
+                    continue
                 if int(_p) <= 0:
                     _ann_text = f"{int(_f)}"
+                    _pct_color = _th.bad
                 else:
                     _pct = int(round(float(_f) / float(_p) * 100.0))
+                    if _pct == 0:
+                        continue
+                    _pct_color = _th.good if float(_f) >= float(_p) else _th.bad
                     _ann_text = f"{int(_f)} ({_pct}%)"
                 fig.add_annotation(
                     x=_xb,
@@ -25800,14 +25909,39 @@ def _gdrs_dynamics_chart_panel(
             title_font=dict(size=_axis_title_sz, color=_th.text),
         )
         fig.update_layout(legend=dict(font=dict(size=_dyn_sz(12))))
-        _gdrs_st_plotly_chart(
-            st,
-            fig,
-            key=f"gdrs_dyn_plot_{vid_locked or 'any'}_{theme}_{agg_kind}",
+        _dyn_plot_key = (
+            f"gdrs_dyn_plot_{vid_locked or 'any'}_{theme}_{agg_kind}_{plan_agg}_{skud_agg}"
         )
+        if _dyn_hscroll:
+            _dyn_canvas_w = max(1180, int(_n_pts * 92))
+            fig.update_layout(showlegend=False)
+            _gdrs_render_bar_hscroll(
+                st,
+                fig,
+                width_px=_dyn_canvas_w,
+                height_px=_chart_h,
+                theme=_th,
+                key=_dyn_plot_key,
+                legend_items=[
+                    ("План", _th.line_plan),
+                    ("Факт", _th.line_fact),
+                ],
+            )
+        else:
+            _gdrs_st_plotly_chart(st, fig, key=_dyn_plot_key)
         st.caption(
             "План и факт на одной шкале (среднее за день в периоде группировки); "
             "подписи у факта — значение и % от плана."
+            + (
+                " График прокручивается по горизонтали — все подписи дней видны без наложения."
+                if _dyn_hscroll
+                else (
+                    " При группировке «День» часть подписей скрыта — полные данные в таблице "
+                    "ниже и во всплывающей подсказке."
+                    if _agg_cf == "день" and _n_pts > 10
+                    else ""
+                )
+            )
         )
 
         _dyn_tbl = pd.DataFrame({
@@ -25961,10 +26095,15 @@ def _gdrs_render_contractors_pie_block(
         )
     try:
         fig3 = _gdrs_pie_contractors_figure(_pie_chart_df, theme=theme)
-        _gdrs_st_plotly_chart(
+        from dashboards.gdrs_theme import get_gdrs_theme
+
+        _gdrs_render_pie_chart(
             st,
             fig3,
-            key=f"gdrs_pie_{key_suffix}" if key_suffix else None,
+            width_px=int(fig3.layout.width or 940),
+            height_px=int(fig3.layout.height or 1100),
+            theme=get_gdrs_theme(theme),
+            key=f"gdrs_pie_{key_suffix}" if key_suffix else "gdrs_pie",
         )
     except Exception as _e:
         st.warning(f"Plotly недоступен: {_e}")
@@ -26055,6 +26194,60 @@ def _gdrs_append_summary_total_row(df: pd.DataFrame) -> pd.DataFrame:
         )
         row["Отклонение %"] = ((sf - sp) / sp * 100.0) if sp > 0 else float("nan")
     return pd.concat([df, pd.DataFrame([row])], ignore_index=True)
+
+
+def _gdrs_render_pie_chart(st, fig, *, width_px: int, height_px: int, theme: Any, key: str) -> None:
+    """Круговая ГДРС: фиксированные пропорции, без responsive-растягивания Streamlit."""
+    import uuid as _uuid
+
+    w = int(max(width_px, 320))
+    h = int(max(height_px, 320))
+    cfg = dict(_PLOTLY_CONFIG)
+    cfg["responsive"] = False
+    try:
+        fig.update_layout(width=w, height=h, autosize=False)
+    except Exception:
+        pass
+    _chart_bg = getattr(theme, "chart_bg", "#ffffff")
+    _border = getattr(theme, "border", "rgba(148,163,184,0.35)")
+    uid = _uuid.uuid4().hex[:8]
+    wrap_cls = f"gdrs-pie-{uid}-wrap"
+    inner_cls = f"gdrs-pie-{uid}-inner"
+    try:
+        plot_div = fig.to_html(
+            full_html=False,
+            include_plotlyjs="cdn",
+            config=cfg,
+            default_width=f"{w}px",
+            default_height=f"{h}px",
+        )
+        shell = (
+            "<!DOCTYPE html><html><head><meta charset='utf-8'>"
+            "<style>"
+            f"html,body{{margin:0;padding:0;background:transparent;overflow:visible;}}"
+            f".{wrap_cls}{{width:100%;max-width:100%;overflow-x:auto;overflow-y:visible;"
+            f"-webkit-overflow-scrolling:touch;box-sizing:border-box;line-height:normal;"
+            f"border:1px solid {_border};border-radius:8px;background:{_chart_bg};"
+            f"display:flex;justify-content:center;padding:4px 0 8px 0;}}"
+            f".{inner_cls}{{width:{w}px;min-width:{w}px;max-width:{w}px;display:block;line-height:normal;}}"
+            f".{inner_cls} .plotly-graph-div,.{inner_cls} .js-plotly-plot{{"
+            f"width:{w}px!important;min-width:{w}px!important;max-width:{w}px!important;"
+            f"height:{h}px!important;}}"
+            f".{wrap_cls}::-webkit-scrollbar{{height:13px;}}"
+            f".{wrap_cls}::-webkit-scrollbar-thumb{{background:rgba(148,163,184,0.6);border-radius:6px;}}"
+            "</style></head><body>"
+            f'<div class="{wrap_cls}"><div class="{inner_cls}">{plot_div}</div></div>'
+            "</body></html>"
+        )
+        components.html(shell, height=h + 20, scrolling=False)
+    except Exception:
+        _gdrs_st_plotly_chart(
+            st,
+            fig,
+            key=key,
+            use_container_width=False,
+            config={"responsive": False},
+        )
 
 
 def _gdrs_st_plotly_chart(st, fig, *, key: str | None = None, **kwargs) -> None:
@@ -26352,6 +26545,8 @@ def dashboard_gdrs(df, vid_locked: str | None = None, *, theme: str | None = Non
     from dashboards.gdrs_resursi import (
         build_main_table,
         gdrs_agg_label_to_key,
+        gdrs_agg_week_num,
+        GDRS_AGG_LABELS,
         gdrs_agg_select_options,
         gdrs_filter_fact_by_months,
         gdrs_filter_fact_resursi_source_for_periods,
@@ -26771,6 +26966,20 @@ def dashboard_gdrs(df, vid_locked: str | None = None, *, theme: str | None = Non
             "Колонки «N нед» — календарные недели месяца (1–7, 8–14, …); "
             "план по неделе — срез 1С на последний день этой недели."
         )
+    else:
+        _wk_parts: list[str] = []
+        _pwn = gdrs_agg_week_num(_plan_agg)
+        _swn = gdrs_agg_week_num(_skud_agg)
+        if _pwn is not None:
+            _wk_parts.append(f"план — **{GDRS_AGG_LABELS.get(f'week:{_pwn}', f'{_pwn} неделя')}**")
+        if _swn is not None:
+            _wk_parts.append(f"СКУД — **{GDRS_AGG_LABELS.get(f'week:{_swn}', f'{_swn} неделя')}**")
+        if _wk_parts:
+            st.caption(
+                "Колонки «План / СКУД / Отклонение» — данные **выбранной недели** "
+                f"({', '.join(_wk_parts)}). "
+                "СКУД = 0, если в resursi.csv нет факта за эту неделю."
+            )
     view = main_t.copy()
     view["Контрагент"] = view.apply(
         lambda r: (
@@ -27039,6 +27248,8 @@ def dashboard_gdrs(df, vid_locked: str | None = None, *, theme: str | None = Non
             vid_locked,
             month_periods=_sel_periods,
             term_index=_term_index,
+            plan_agg=_plan_agg,
+            skud_agg=_skud_agg,
             theme=theme,
         )
 
