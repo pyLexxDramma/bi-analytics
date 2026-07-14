@@ -1423,26 +1423,17 @@ div[class*="st-key-pd_delay_project_chart"] [data-testid="stPlotlyChart"] {
     -webkit-text-fill-color: #8899aa !important;
 }
 
-/* KPI отклонения РД (план − факт) */
-.rd-doc-dev-metric-label {
-    font-size: 0.875rem;
-    color: #c8d8ec !important;
-    -webkit-text-fill-color: #c8d8ec !important;
-    margin-bottom: 0.25rem;
-    line-height: 1.4;
+/* KPI отклонения РД (план − факт): нативная st.metric, цвет значения по знаку.
+   «+» (отставание) — красный, «−» (опережение) / «0» — зелёный. */
+.st-key-rd_dev_metric_pos [data-testid="stMetricValue"],
+.st-key-rd_dev_metric_pos [data-testid="stMetricValue"] * {
+    color: #27AE60 !important;
+    -webkit-text-fill-color: #27AE60 !important;
 }
-.rd-doc-dev-metric-value {
-    font-size: 1.75rem;
-    font-weight: 600;
-    line-height: 1.2;
-}
-.rd-doc-dev-metric-pos {
-    color: #46d68a !important;
-    -webkit-text-fill-color: #46d68a !important;
-}
-.rd-doc-dev-metric-neg {
-    color: #ff5454 !important;
-    -webkit-text-fill-color: #ff5454 !important;
+.st-key-rd_dev_metric_neg [data-testid="stMetricValue"],
+.st-key-rd_dev_metric_neg [data-testid="stMetricValue"] * {
+    color: #C0392B !important;
+    -webkit-text-fill-color: #C0392B !important;
 }
 
 /* Ряд колонок: markdown и подписи внутри колонок (плашки над графиком и т.п.) */
@@ -1590,6 +1581,20 @@ div[data-testid="stDataEditor"] [role="gridcell"][aria-selected="true"] {
 
 /* Фильтры в строке: равная ширина колонок, без пустого flex-места между selectbox’ами */
 section.main [data-testid="stHorizontalBlock"] > div[data-testid="column"] {
+    flex: 1 1 0% !important;
+    min-width: 0 !important;
+}
+
+/* Сводка «Динамика выдачи РД»: KPI на всю ширину блока, ровными колонками.
+   Streamlit ≥1.36 сменил testid колонок "column" → "stColumn" — держим оба. */
+.st-key-rd_exec_summary_kpi [data-testid="stHorizontalBlock"],
+.st-key-rd_exec_summary_kpi_fb [data-testid="stHorizontalBlock"] {
+    width: 100% !important;
+}
+.st-key-rd_exec_summary_kpi [data-testid="stHorizontalBlock"] > div[data-testid="column"],
+.st-key-rd_exec_summary_kpi [data-testid="stHorizontalBlock"] > div[data-testid="stColumn"],
+.st-key-rd_exec_summary_kpi_fb [data-testid="stHorizontalBlock"] > div[data-testid="column"],
+.st-key-rd_exec_summary_kpi_fb [data-testid="stHorizontalBlock"] > div[data-testid="stColumn"] {
     flex: 1 1 0% !important;
     min-width: 0 !important;
 }
