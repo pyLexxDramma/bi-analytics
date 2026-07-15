@@ -6414,7 +6414,8 @@ def _apply_deviations_combined_filters(
     )
 
     filtered_df = _deviations_apply_snapshot_month_filter(filtered_df, dynamics=False)
-    filtered_df = _deviations_apply_reason_filter(filtered_df)
+    # «Причина» не режем здесь: вкладка «Доли причин» должна показывать распределение
+    # по всем причинам проекта. Фильтр причины — в динамике и в детальной таблице.
     _pt_en = _deviations_period_type_en_from_ru(
         st.session_state.get("dynamics_period", "Месяц")
     )
@@ -6607,14 +6608,25 @@ def _render_deviations_combined_shared_filters(df):
 
             with col5:
                 if "reason of deviation" in df.columns:
-                    _reason_opts = ["Все"] + sorted(
-                        df["reason of deviation"]
+                    _df_reason_opts = _deviations_project_slice_by_key(
+                        df, "devcombo_project"
+                    )
+                    _reason_vals = (
+                        _df_reason_opts["reason of deviation"]
                         .dropna()
                         .astype(str)
                         .str.strip()
-                        .unique()
-                        .tolist()
                     )
+                    _reason_vals = _reason_vals[
+                        _reason_vals.ne("")
+                        & ~_reason_vals.str.lower().isin(["nan", "none", "null"])
+                    ]
+                    _reason_opts = ["Все"] + sorted(_reason_vals.unique().tolist())
+                    _cur_reason = str(
+                        st.session_state.get("devcombo_reason", "Все") or "Все"
+                    ).strip()
+                    if _cur_reason not in _reason_opts:
+                        st.session_state["devcombo_reason"] = "Все"
                     st.selectbox("Причина", _reason_opts, key="devcombo_reason")
                 else:
                     suppress_caption("Нет колонки причин отклонений")
@@ -7021,7 +7033,9 @@ def dashboard_reasons_of_deviation(df, hide_shared_filters=False, building_col=N
         _ymax = float(reason_counts["Количество"].max() or 0)
         n = len(reason_counts)
         _bar_h = max(960, int(560 + n * 112))
-        _y_top = max(1.0, _ymax * 1.62 + 20.0)
+        # Запас под outside-подписи без «плюс 20» — иначе при малых counts (1–3)
+        # столбцы сжимаются к нулю и график выглядит пустым.
+        _y_top = max(_ymax * 1.55, _ymax + 1.25, 1.0)
         _gdrs_rc = _plotly_bargaps_sparse_x_like_gdrs(n)
         _ly_rc = dict(
             height=_bar_h,
@@ -7037,6 +7051,7 @@ def dashboard_reasons_of_deviation(df, hide_shared_filters=False, building_col=N
                 title=dict(text="Количество", standoff=10, font=dict(size=14, color=_ax_clr)),
                 automargin=True,
                 tickfont=dict(size=13, color=_ax_clr),
+                dtick=1 if _ymax <= 8 else None,
             ),
             xaxis=dict(
                 title=dict(text="Причина отклонений", standoff=44, font=dict(size=14, color=_ax_clr)),
@@ -7047,8 +7062,8 @@ def dashboard_reasons_of_deviation(df, hide_shared_filters=False, building_col=N
             _ly_rc.update(_gdrs_rc)
         fig.update_layout(**_ly_rc)
         if n == 1:
-            fig.update_traces(width=0.14, selector=dict(type="bar"))
-            fig.update_layout(bargap=0.92, bargroupgap=0.28)
+            fig.update_traces(width=0.36, selector=dict(type="bar"))
+            fig.update_layout(bargap=0.72, bargroupgap=0.22)
         if n > 6:
             fig.update_xaxes(tickangle=-45, ticklabelstandoff=14)
         else:
@@ -7136,8 +7151,9 @@ def dashboard_reasons_of_deviation(df, hide_shared_filters=False, building_col=N
         theme="light" if is_light_preview_active() else "dark",
     )
     _notes_col_rs = _gantt_resolve_notes_column(_table_source_df)
+    _table_maket_df = _deviations_apply_reason_filter(filtered_df)
     _render_deviations_maket_table(
-        filtered_df,
+        _table_maket_df,
         building_col,
         notes_col=_notes_col_rs,
         notes_source_df=_table_source_df,
