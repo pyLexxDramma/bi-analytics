@@ -320,6 +320,52 @@ def _collapse_filters_expander_on_dashboard_open(st: Any, expander_key: str) -> 
         st.session_state[expander_key] = False
 
 
+def _infer_filter_reset_value(key: str, previous: Any) -> Any:
+    """Подобрать дефолт после сброса, если явный ``defaults`` не задан.
+
+    Streamlit после ``pop`` по key часто оставляет прежний выбор в UI —
+    нужно явно записать значение в session_state (особенно multiselect/selectbox).
+    """
+    if isinstance(previous, list):
+        return []
+    if isinstance(previous, bool):
+        kl = str(key).lower()
+        # hide_zero / hide_overdue в дашбордах по умолчанию включены (True)
+        if "hide_zero" in kl or "hide_overdue" in kl:
+            return True
+        return False
+    if isinstance(previous, str):
+        kl = str(key).lower()
+        if previous in (FILTER_ALL, "Все", "Все проекты", PROJECT_FILTER_PLACEHOLDER):
+            return FILTER_ALL
+        for tip in (
+            "project",
+            "block",
+            "building",
+            "contractor",
+            "counterparty",
+            "kontr",
+            "reason",
+            "section",
+            "stage",
+            "object",
+            "contr",
+            "kind",
+        ):
+            if tip in kl:
+                return FILTER_ALL
+        if previous in ("Месяц", "Квартал", "Год", "День"):
+            return "Месяц"
+        if previous in ("По месяцам", "Накопительно"):
+            return "По месяцам"
+        if previous in (PERIOD_MODE_ALL_TIME, PERIOD_MODE_CUSTOM):
+            return PERIOD_MODE_ALL_TIME
+        if previous == "Весь период":
+            return "Весь период"
+    # date range / числа / служебные tuple — не трогаем: виджет возьмёт свой value=
+    return None
+
+
 def reset_filter_widgets(
     st: Any,
     keys: Sequence[str],
@@ -334,7 +380,8 @@ def reset_filter_widgets(
     заранее неизвестно.
 
     ``defaults`` — явные значения после очистки (selectbox в Streamlit иначе
-    может сохранить последний выбор в UI).
+    может сохранить последний выбор в UI). Если не переданы — для list/bool и
+    типичных фильтров («Проект» → «Все») значения выводятся автоматически.
     """
     if not hasattr(st, "session_state"):
         return
@@ -348,16 +395,29 @@ def reset_filter_widgets(
             prefixes.append(s)
         else:
             exact.append(s)
+
+    cleared: dict[str, Any] = {}
     for k in exact:
+        if k in st.session_state:
+            cleared[k] = st.session_state[k]
         st.session_state.pop(k, None)
     if prefixes:
         for existing in list(st.session_state.keys()):
             es = str(existing)
             if any(es.startswith(p) for p in prefixes):
+                cleared[es] = st.session_state[existing]
                 st.session_state.pop(existing, None)
+
+    inferred: dict[str, Any] = {}
+    for k, prev in cleared.items():
+        cand = _infer_filter_reset_value(k, prev)
+        if cand is not None:
+            inferred[k] = cand
     if defaults:
         for k, v in defaults.items():
-            st.session_state[k] = v
+            inferred[str(k)] = v
+    for k, v in inferred.items():
+        st.session_state[k] = v
 
 
 def render_filter_chips(st: Any, chips: Optional[Sequence[Chip]]) -> None:
@@ -458,17 +518,25 @@ def filters_popover(
     _collapse_filters_expander_on_dashboard_open(st, _exp_key)
     with st.expander(pop_label, expanded=expanded, key=_exp_key):
         if reset_keys:
+            _rk = [str(k) for k in reset_keys]
+            _rd = dict(reset_defaults) if reset_defaults else None
+
+            def _on_filters_reset(
+                _keys: Sequence[str] = _rk,
+                _defs: Optional[Mapping[str, Any]] = _rd,
+            ) -> None:
+                # on_click выполняется до отрисовки виджетов — так session_state
+                # успевает обновиться до multiselect/selectbox.
+                reset_filter_widgets(st, _keys, defaults=_defs)
+
             _rb_col, _ = st.columns([1, 4])
             with _rb_col:
-                if st.button(
+                st.button(
                     "Сбросить",
-                    key=_reset_button_key(reset_keys),
+                    key=_reset_button_key(_rk),
                     help="Сбросить фильтры этого отчёта к значениям по умолчанию",
-                ):
-                    reset_filter_widgets(
-                        st, reset_keys, defaults=reset_defaults
-                    )
-                    st.rerun()
+                    on_click=_on_filters_reset,
+                )
         yield handle
 
 

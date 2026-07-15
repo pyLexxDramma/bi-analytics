@@ -13370,7 +13370,16 @@ def dashboard_budget_by_period(df):
     hide_adjusted = True
 
     filtered_df = df.copy()
-    with filters_panel(st, reset_keys=["budget_project", "budget_period*", "_bdds_period_scope"]):
+    with filters_panel(
+        st,
+        reset_keys=["budget_project", "budget_period*", "_bdds_period_scope"],
+        reset_defaults={
+            "budget_project": [],
+            "budget_period": "Месяц",
+            "budget_period_view": "По месяцам",
+            "budget_period_show_deviation": False,
+        },
+    ):
         with filters_selectors(st):
             col1, col2, col3, col4, col5 = st.columns(5, gap="small")
 
@@ -15436,7 +15445,15 @@ def dashboard_bdr(df):
     _bdr_cal_start = None
     _bdr_cal_end = None
     # Как БДДС: период / проект / год — список проектов из MSP; год после фильтра по проекту.
-    with filters_panel(st, reset_keys=["bdr_project", "bdr_period*", "_bdr_period_scope"]):
+    with filters_panel(
+        st,
+        reset_keys=["bdr_project", "bdr_period*", "_bdr_period_scope"],
+        reset_defaults={
+            "bdr_project": "Все",
+            "bdr_period": "Месяц",
+            "bdr_period_view": "По месяцам",
+        },
+    ):
         with filters_selectors(st):
             col1, col2, col3, col4, _col5 = st.columns(5, gap="small")
             with col1:
@@ -19574,7 +19591,11 @@ def dashboard_rd_delay(df, is_pd: bool = False):
         return pd.to_datetime(series.astype(str), errors="coerce", dayfirst=True, format="mixed")
 
     # Add filters
-    with filters_panel(st, panel_key=f"rd_delay_{doc_code}"):
+    with filters_panel(
+        st,
+        panel_key=f"rd_delay_{doc_code}",
+        reset_keys=["rd_delay_"],
+    ):
         filter_col1, filter_col2, filter_col3 = st.columns(3, gap="small")
 
         # Project filter (несколько проектов)
@@ -28769,7 +28790,22 @@ def dashboard_debit_credit(df):
     issue_start = None
     issue_end = None
 
-    with filters_panel(st):
+    with filters_panel(
+        st,
+        reset_keys=[
+            "debit_credit_project",
+            "debit_credit_contractor",
+            "debit_credit_contract_q",
+            "debit_credit_period_range",
+            "debit_credit_display_view",
+        ],
+        reset_defaults={
+            "debit_credit_project": "Все",
+            "debit_credit_contractor": "Все",
+            "debit_credit_contract_q": "",
+            "debit_credit_display_view": "Без группировки",
+        },
+    ):
         with filters_selectors(st):
             fp1, fp2, fp3, fp4, fp5 = st.columns(5, gap="small")
             with fp1:
@@ -30346,10 +30382,20 @@ def dashboard_executive_documentation(df):
     dmax = work["_cd"].max()
     today = date.today()
 
-    with filters_panel(st, reset_keys=[
-        "exec_doc_object", "exec_doc_contr", "exec_doc_kind",
-        "exec_doc_period", "exec_doc_granularity", "exec_doc_hide_overdue_signed",
-    ]):
+    with filters_panel(
+        st,
+        reset_keys=[
+            "exec_doc_object", "exec_doc_contr", "exec_doc_kind",
+            "exec_doc_period", "exec_doc_granularity", "exec_doc_hide_overdue_signed",
+        ],
+        reset_defaults={
+            "exec_doc_object": "Все",
+            "exec_doc_contr": "Все",
+            "exec_doc_kind": "Все",
+            "exec_doc_granularity": "Месяц",
+            "exec_doc_hide_overdue_signed": True,
+        },
+    ):
         # ТЗ (скриншот): блок фильтров как в «Отклонение от базового плана» —
         # все селекторы одной шириной в одну линию, чекбоксы отдельным блоком.
         _exec_kinds_catalog = _exec_doc_kinds_catalog_df()
@@ -33359,7 +33405,11 @@ def dashboard_documentation(
     show_forecast_date_col = True
 
     # Add filters
-    with filters_panel(st, panel_key=f"{_doc_fk}filters"):
+    with filters_panel(
+        st,
+        panel_key=f"{_doc_fk}filters",
+        reset_keys=[_doc_fk],
+    ):
         filter_col1, filter_col2, filter_col3 = st.columns(3, gap="small")
         # Filter by project (несколько проектов; пусто = все)
         # R23-06 (стр.17): в ПД по умолчанию выбраны все проекты («Все» вместо «Select all»).
@@ -36108,7 +36158,11 @@ def _render_approved_budget_plan_fact(df: pd.DataFrame) -> None:
     if "project name" in budget_df.columns:
         budget_df = _project_column_apply_canonical(budget_df, "project name")
 
-    with filters_panel(st, reset_keys=["approved_budget_project"]):
+    with filters_panel(
+        st,
+        reset_keys=["approved_budget_project"],
+        reset_defaults={"approved_budget_project": "Все"},
+    ):
         with filters_selectors(st):
             if "project name" in budget_df.columns:
                 projects = ["Все"] + _unique_project_labels_for_select(budget_df["project name"])
@@ -39388,7 +39442,23 @@ def dashboard_forecast_budget(df):
     period_type_en = "Month"
     period_label = "Месяц"
 
-    with filters_panel(st):
+    with filters_panel(
+        st,
+        reset_keys=[
+            "forecast_bddcs_project_filter",
+            "forecast_bddcs_period_group",
+            "forecast_bddcs_period_view",
+            "forecast_bddcs_cal_range",
+            "forecast_bddcs_dev_base_",
+            "forecast_bddcs_hide_dev_",
+            "forecast_bddcs_hide_zero_",
+        ],
+        reset_defaults={
+            "forecast_bddcs_project_filter": "Все",
+            "forecast_bddcs_period_group": "Месяц",
+            "forecast_bddcs_period_view": "По месяцам",
+        },
+    ):
         with filters_selectors(st):
             c1, c2, c3, c4, c5 = st.columns(5, gap="small")
             with c1:
@@ -44426,7 +44496,23 @@ def dashboard_predpisania(df):
         st.markdown(_PRED_FILTERS_ROW_CSS, unsafe_allow_html=True)
         st.session_state["_pred_filters_align_css_once"] = True
 
-    with filters_panel(st):
+    with filters_panel(
+        st,
+        reset_keys=[
+            "pred_m_p",
+            "pred_m_c_ms",
+            "pred_m_contract",
+            "pred_m_contract_srv",
+            "pred_issue_period",
+            "pred_hide_resolved",
+        ],
+        reset_defaults={
+            "pred_m_p": [],
+            "pred_m_c_ms": [],
+            "pred_m_contract": "",
+            "pred_hide_resolved": False,
+        },
+    ):
         projects = pred_project_options
         if contr_col:
             contractors_ms = sorted(
@@ -45236,7 +45322,11 @@ def dashboard_developer_projects(df, *, theme: str = "dark"):
             _session_reset_project_if_excluded(
                 "dev_proj_multi", allowed_labels=projects
             )
-            with filters_panel(st):
+            with filters_panel(
+                st,
+                reset_keys=["dev_proj_multi"],
+                reset_defaults={"dev_proj_multi": []},
+            ):
                 sel_projs = st.multiselect(
                     "Проект",
                     projects,
