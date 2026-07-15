@@ -13423,6 +13423,10 @@ def dashboard_budget_by_period(df):
             with col2:
                 if "plan end" in _bdds_proj_df.columns:
                     _pe_series = pd.to_datetime(_bdds_proj_df["plan end"], errors="coerce")
+                    _def_start = None
+                    _def_end = None
+                    _bdds_min_all = None
+                    _bdds_max_all = None
                     if _pe_series.notna().any():
                         _pe_min = _pe_series.min()
                         _pe_max = _pe_series.max()
@@ -13437,18 +13441,42 @@ def dashboard_budget_by_period(df):
                                 _bdds_min_all, _bdds_max_all = _def_start, _def_end
                         except Exception:
                             _bdds_min_all, _bdds_max_all = _def_start, _def_end
-                        if _def_start and _def_end:
-                            _bdds_scope = tuple(sorted(_bdds_sel_projects)) if _bdds_sel_projects else ("__all__",)
-                            if st.session_state.get("_bdds_period_scope") != _bdds_scope:
-                                st.session_state["_bdds_period_scope"] = _bdds_scope
-                                st.session_state.pop("budget_period_range", None)
+                    if (
+                        not _bdds_all_projects
+                        and len(_bdds_sel_projects or []) == 1
+                    ):
+                        try:
+                            from dashboards.finance_from_1c import (
+                                bdds_project_turnover_date_bounds,
+                            )
+
+                            _1c_lo, _1c_hi = bdds_project_turnover_date_bounds(
+                                str(_bdds_sel_projects[0]),
+                                reference_1c_dannye=_bdds_ref_boot,
+                            )
+                            if _1c_lo is not None and _1c_hi is not None:
+                                if _def_start is None or _1c_lo < _def_start:
+                                    _def_start = _1c_lo
+                                if _def_end is None or _1c_hi > _def_end:
+                                    _def_end = _1c_hi
+                                if _bdds_min_all is None or _1c_lo < _bdds_min_all:
+                                    _bdds_min_all = _1c_lo
+                                if _bdds_max_all is None or _1c_hi > _bdds_max_all:
+                                    _bdds_max_all = _1c_hi
+                        except Exception:
+                            pass
+                    if _def_start and _def_end:
+                        _bdds_scope = tuple(sorted(_bdds_sel_projects)) if _bdds_sel_projects else ("__all__",)
+                        if st.session_state.get("_bdds_period_scope") != _bdds_scope:
+                            st.session_state["_bdds_period_scope"] = _bdds_scope
+                            st.session_state.pop("budget_period_range", None)
                         _period_from, _period_to = period_date_range_input(
                             st,
                             "budget_period_range",
                             min_value=_bdds_min_all or _def_start,
                             max_value=_bdds_max_all or _def_end,
                             default=(_def_start, _def_end) if _def_start and _def_end else None,
-                            help="Диапазон по полю «Конец план».",
+                            help="Диапазон по полю «Конец план» / оборотам 1С.",
                         )
 
             with col3:
@@ -14345,10 +14373,11 @@ def dashboard_budget_by_period(df):
                 render_table_subheader(st, _pf_name, filters_suffix=_pf_dates)
                 _render_budget_table_html(
                         _pf_tbl,
-                        finance_deviation_column=None,
+                        finance_deviation_column="Отклонение, млн. руб.",
+                        deviation_color_fact_vs_plan=True,
                         row_kind_column="_row_kind",
                         emphasize_row_kinds=("project", "total"),
-                        **_pf_kw,
+                        **{**_pf_kw, "table_scroll_max_height_vh": 55.0},
                     )
         except Exception as _pf_exc:
             st.error(
@@ -31481,18 +31510,35 @@ def _rd_kpi_plan_fact_deviation_today(
 def _render_rd_deviation_metric(label: str, deviation: float) -> None:
     """Метрика отклонения РД (план − факт).
 
-    Нативная `st.metric` (надёжно рисуется и выравнивается с соседними KPI),
-    цвет значения — через scoped-ключ контейнера: «+» (отставание) красным,
-    «−» (опережение) / «0» зелёным.
+    Знаковая прокраска как в таблицах РД: «+» (отставание) — красный,
+    «−» (опережение) — зелёный, «0» — нейтральный. HTML + inline color,
+    чтобы не перекрывалось общим CSS st.metric (тёмная/светлая тема).
     """
+    from html import escape as html_esc
+
+    from dashboards.light_theme import finance_chart_label_color
+
     try:
         d = int(round(float(deviation)))
     except (TypeError, ValueError):
         d = 0
-    disp = f"{d:+d}" if d else "0"
-    tone = "neg" if d > 0 else "pos"
-    with st.container(key=f"rd_dev_metric_{tone}"):
-        st.metric(label, disp)
+    if d > 0:
+        disp, color = f"{d:+d}", "#e74c3c"
+    elif d < 0:
+        disp, color = f"{d:d}", "#27ae60"
+    else:
+        disp, color = "0", "#8899aa"
+    label_color = finance_chart_label_color(dark="#c8d8ec", light="#64748b")
+    st.markdown(
+        f'<div class="pd-doc-dev-metric">'
+        f'<div class="pd-doc-dev-metric-label" style="color:{label_color}!important;'
+        f'-webkit-text-fill-color:{label_color}!important;">{html_esc(label)}</div>'
+        f'<div class="pd-doc-dev-metric-value" style="color:{color}!important;'
+        f'-webkit-text-fill-color:{color}!important;font-size:1.75rem;font-weight:600;">'
+        f"{html_esc(disp)}</div>"
+        f"</div>",
+        unsafe_allow_html=True,
+    )
 
 
 def _pd_detail_table_labels(

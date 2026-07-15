@@ -550,6 +550,7 @@ TABLE_COL_TEXT_KEYS = (
     "контрагент", "подряд", "шифр", "объект", "ковенант", "функц", "наимен", "документ",
     "предпис", "договор", "исполнит", "мероприят", "описан", "коммент", "этап", "вех", "вид", "note", "name",
     "task", "partner", "контраг", "секци", "подраздел", "строение", "участок", "работ",
+    "статья",
 )
 
 
@@ -1214,14 +1215,19 @@ def apply_chart_background(fig, *, skip_uniformtext: bool = False):
     return fig
 
 
-def format_million_rub(value, *, decimals: int = 2) -> str:
-    """Форматирует сумму в рублях как млн руб. (по умолчанию 2 знака)."""
+def format_million_rub(value, *, decimals: int = 2, unit_suffix: str | None = " млн. руб.") -> str:
+    """Форматирует сумму в рублях как млн руб. (по умолчанию 2 знака).
+
+    unit_suffix=None или \"\" — только число (для узких колонок матрицы план-факт).
+    """
     if value is None or (isinstance(value, float) and pd.isna(value)):
         return ""
     try:
         x = float(value) / MILLION
         d = max(0, int(decimals))
-        return f"{x:.{d}f} млн. руб."
+        num = f"{x:.{d}f}"
+        suf = "" if unit_suffix is None else str(unit_suffix)
+        return f"{num}{suf}"
     except (TypeError, ValueError):
         return ""
 
@@ -1688,7 +1694,7 @@ def _column_uses_fact_plan_colors(
 
 def _is_table_label_column(col: Any) -> bool:
     cl = str(col).casefold().strip()
-    return cl in ("проект", "период")
+    return cl in ("проект", "период", "статья")
 
 
 def _parse_finance_value(v) -> Optional[float]:
@@ -1801,16 +1807,28 @@ def budget_table_to_html(
             _dev_red_color = "#b91c1c"
     except Exception:
         pass
+    _n_visible = sum(1 for c in df.columns if c != row_kind_column)
+    _wide_matrix = _n_visible >= 12
     _style_css = (
-        f'#{wrap_id} table {{ table-layout: auto; font-size: {_tbl_px}px; width: max-content; min-width: 100%; '
+        f'#{wrap_id} table {{ table-layout: auto; font-size: {_tbl_px}px; width: max-content !important; min-width: 100%; '
         f'border-collapse: separate !important; border-spacing: 0 !important; border: {_cell_border} !important; }}'
         f'#{wrap_id} th, #{wrap_id} td {{ min-width: 11em; max-width: 24em; padding: {_pad_y}px {_pad_x}px; box-sizing: border-box; '
         f'border-right: {_cell_border} !important; border-bottom: {_cell_border} !important; '
         f'border-top: none !important; border-left: none !important; }}'
         f'#{wrap_id} thead tr:first-child th {{ border-top: {_cell_border} !important; }}'
         f'#{wrap_id} tr th:first-child, #{wrap_id} tr td:first-child {{ border-left: {_cell_border} !important; }}'
-        f'#{wrap_id} th:first-child, #{wrap_id} td:first-child {{ min-width: 14em; max-width: 32em; }}'
+        f'#{wrap_id} th:first-child, #{wrap_id} td:first-child {{ min-width: 14em; max-width: 32em; '
+        f'position: sticky; left: 0; z-index: 3; background-color: {TABLE_BG_COLOR} !important; }}'
+        f'#{wrap_id} thead th:first-child {{ z-index: 6; background-color: {TABLE_HEADER_BG_COLOR} !important; }}'
+        f'#{wrap_id} tr.bd-group-row td:first-child {{ background-color: {TABLE_GROUP_ROW_BG_COLOR} !important; }}'
+        f'#{wrap_id} tr.bd-total-row td:first-child {{ background-color: {_tot_bg} !important; z-index: 5; }}'
         f'#{wrap_id} th:not(:first-child), #{wrap_id} td:not(:first-child) {{ min-width: 9em; max-width: 16em; }}'
+        + (
+            f'#{wrap_id} th.col-num, #{wrap_id} td.col-num {{ min-width: 7.5em !important; max-width: 11em !important; }}'
+            if _wide_matrix
+            else ""
+        )
+        + (
         f'#{wrap_id} td.bd-cell-red, #{wrap_id} td.bd-cell-red * {{ color: {_dev_red_color} !important; }} '
         f'#{wrap_id} td.bd-cell-green, #{wrap_id} td.bd-cell-green * {{ color: {_dev_green_color} !important; }}'
         f'#{wrap_id} td.bd-cell-yellow, #{wrap_id} td.bd-cell-yellow * {{ color: hsl(48,95%,62%) !important; }}'
@@ -1820,6 +1838,7 @@ def budget_table_to_html(
         f'#{wrap_id} tr.bd-group-row td {{ background-color: {TABLE_GROUP_ROW_BG_COLOR} !important; }}'
         f'#{wrap_id} tr.bd-total-row td {{ background-color: {_tot_bg} !important; {_tot_font} }}'
         f'#{wrap_id} tr.bd-total-row td, #{wrap_id} tr.bd-total-row td * {{ {_tot_font} }}'
+        )
         + (
             f'#{wrap_id} th.bd-fin-dev-col, #{wrap_id} td.bd-fin-dev-col '
             f'{{ min-width: 10.5em; max-width: 12em; {HTML_TABLE_TD_COMPACT_CSS} isolation: isolate; }}'
@@ -1835,7 +1854,7 @@ def budget_table_to_html(
             f'#{wrap_id} thead th {{ position: sticky; top: 0; z-index: 5; }}'
             f'#{wrap_id} tr.bd-total-row td {{ position: sticky; bottom: 0; z-index: 4; '
             f'box-shadow: 0 -3px 10px rgba(0,0,0,0.35); }}'
-            f'#{wrap_id} .budget-table-scroll table {{ width: max-content; min-width: 100%; }}'
+            f'#{wrap_id} .budget-table-scroll table {{ width: max-content !important; min-width: 100%; }}'
             if _scroll_vh
             else ""
         )
@@ -1856,7 +1875,7 @@ def budget_table_to_html(
         (
             f'<div class="budget-table-scroll" data-scroll-vh="{_scroll_vh:.1f}">' if _scroll_vh else ""
         ),
-        f'<table class="bi-sortable-table bi-sort-click-only" style="width:100%; border-collapse: collapse; background-color: {TABLE_BG_COLOR}; color: {TABLE_TEXT_COLOR}; font-size: {_tbl_px}px;">',
+        f'<table class="bi-sortable-table bi-sort-click-only" style="width:max-content;min-width:100%;border-collapse:collapse;background-color:{TABLE_BG_COLOR};color:{TABLE_TEXT_COLOR};font-size:{_tbl_px}px;">',
         "<thead><tr>",
     ]
     header_cols = [c for c in df.columns if c != row_kind_column]
@@ -1920,11 +1939,18 @@ def budget_table_to_html(
                 if label_columns_font_css and _is_row_label_col
                 else ""
             )
+            _cl_col = str(col).casefold()
+            _is_plan_or_fact_col = (
+                ("план" in _cl_col or "факт" in _cl_col)
+                and "отклон" not in _cl_col
+                and col != finance_deviation_column
+            )
+            _plan_fact_weight = "font-weight:700;" if _is_plan_or_fact_col else ""
             if _column_uses_fact_plan_colors(
                 col, finance_deviation_column, color_fact_column=color_fact_column
             ):
                 num = _parse_finance_value(val)
-                cl = str(col).casefold()
+                cl = _cl_col
                 if (
                     finance_deviation_column
                     and col == finance_deviation_column
@@ -2012,14 +2038,14 @@ def budget_table_to_html(
                     _align = "text-align:center;vertical-align:middle;" if _cc == "col-num" else "text-align:left;vertical-align:top;"
                     parts.append(
                         f'<td class="{_cc}" style="padding: {_pad_y}px {_pad_x}px; color: {TABLE_TEXT_COLOR}; '
-                        f'background-color: {_cell_bg}; {_td_css} {_align} {_label_css}"{_sort_attr}>{val_esc}</td>'
+                        f'background-color: {_cell_bg}; {_td_css} {_align} {_plan_fact_weight} {_label_css}"{_sort_attr}>{val_esc}</td>'
                     )
             else:
                 _cc = table_column_css_class(col)
                 _td_css = HTML_TABLE_TD_COMPACT_CSS if _cc == "col-num" else HTML_TABLE_TD_TEXT_CSS
                 _align = "text-align:center;vertical-align:middle;" if _cc == "col-num" else "text-align:left;vertical-align:top;"
                 parts.append(
-                    f'<td class="{_cc}" style="padding: {_pad_y}px {_pad_x}px; color: {TABLE_TEXT_COLOR}; background-color: {_cell_bg}; {_td_css} {_align} {_label_css}"{_sort_attr}>{val_esc}</td>'
+                    f'<td class="{_cc}" style="padding: {_pad_y}px {_pad_x}px; color: {TABLE_TEXT_COLOR}; background-color: {_cell_bg}; {_td_css} {_align} {_plan_fact_weight} {_label_css}"{_sort_attr}>{val_esc}</td>'
                 )
         parts.append("</tr>")
     parts.append("</tbody></table>")

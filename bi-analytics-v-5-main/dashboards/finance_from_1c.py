@@ -1046,20 +1046,23 @@ def ensure_budget_frame_with_fallback(
         _project_norm_key_matches_msp_keys,
     )
 
+    nt = (narrow_to_project_norm_key or "").strip()
     if restrict_projects_from_df and "project name" in work.columns:
         nz = work["project name"].dropna()
-        if nz.empty:
+        # MSP пуст после фильтра периода, но выбран проект — тянем 1С по narrow key.
+        if nz.empty and not nt:
             return work, False
 
-        keys = {_project_filter_norm_key(x) for x in nz.unique()}
+        keys = {_project_filter_norm_key(x) for x in nz.unique()} if not nz.empty else set()
         keys.discard("")
+        if nt:
+            keys.add(nt)
         if keys:
             _rk = syn["project name"].map(_project_filter_norm_key)
             syn = syn[
                 _rk.map(lambda rk: _project_norm_key_matches_msp_keys(rk, keys))
             ].copy()
 
-    nt = (narrow_to_project_norm_key or "").strip()
     if nt and not syn.empty and "project name" in syn.columns:
         _rk_n = syn["project name"].map(_project_filter_norm_key)
         syn = syn[
@@ -1432,10 +1435,33 @@ def _bdds_month_label_short(ts: pd.Timestamp) -> str:
     return pd.Timestamp(ts).strftime("%m.%y")
 
 
-def _bdds_month_label_short(ts: pd.Timestamp) -> str:
-    if ts is None or pd.isna(ts):
-        return ""
-    return pd.Timestamp(ts).strftime("%m.%y")
+def bdds_project_turnover_date_bounds(
+    project_name: str,
+    *,
+    reference_1c_dannye: Optional[pd.DataFrame] = None,
+) -> tuple[Any | None, Any | None]:
+    """Мин/макс даты оборотов 1С по проекту (для дефолта периода БДДС)."""
+    ref = resolve_budget_turnover_dannye(reference_1c_dannye)
+    if ref is None or ref.empty or not str(project_name or "").strip():
+        return None, None
+    from dashboards._renderers import _project_filter_norm_key, _project_norm_key_matches_msp_keys
+
+    proj = _pick_col(ref, ("Проект", "project", "проект"))
+    per = _pick_col(ref, ("Период", "period"))
+    if not proj or not per:
+        return None, None
+    pk = _project_filter_norm_key(project_name)
+    t = ref[
+        ref[proj]
+        .map(_project_filter_norm_key)
+        .map(lambda rk: _project_norm_key_matches_msp_keys(rk, {pk}))
+    ].copy()
+    if t.empty:
+        return None, None
+    d = _parse_1c_period_series(t[per]).dropna()
+    if d.empty:
+        return None, None
+    return d.min().date(), d.max().date()
 
 
 def _bdds_turnover_g_for_project(
@@ -1541,16 +1567,17 @@ def _bdds_turnover_g_for_project(
         fc = float(month_totals.loc[m, "_fact"])
         if pl + fc <= 0.0:
             continue
+        # Подозрительный «план без факта» (демо/ошибочная выгрузка) — обнуляем план.
         if pl > 500_000_000.0 and fc < pl * 0.05:
             pl = 0.0
         if pl + fc <= 0.0:
             continue
-        if int(m.year) >= 2025 and max(pl, fc) > 100_000_000.0:
-            continue
         months_active.append(m)
-    m2024 = sorted(x for x in months_active if int(x.year) == 2024)
-    m2026 = sorted(x for x in months_active if int(x.year) == 2026)
-    months = (m2024 + m2026)[: max(1, int(max_months))]
+    # Все активные месяцы (раньше ошибочно брали только 2024+2026 и резали
+    # суммы >100 млн за 2025+ — «Ленинский» и др. проекты с оборотами 2025+ ломались).
+    months = months_active[: max(1, int(max_months))]
+    if not months:
+        return None
 
     if rd and rd in t.columns:
         rs = t[rd].astype(str).str.casefold()
@@ -1595,7 +1622,8 @@ def build_bdds_plan_fact_analysis_table(
     max_months: int = 24,
 ) -> Optional[pd.DataFrame]:
     """
-    Матрица «Статья × месяц» (план/факт/откл.) для таблицы «План-фактный анализ» на БДДС.
+    План-фактный анализ БДДС: по месяцам (заголовок) → статьи с П/Ф/Δ.
+    Длинный формат (не широкая матрица), чтобы не было пустых колонок слева.
     """
     prep = _bdds_turnover_g_for_project(
         project_name=project_name,
@@ -1607,71 +1635,89 @@ def build_bdds_plan_fact_analysis_table(
     if prep is None:
         return None
     g, months, art, _proj_nm = prep
-    from utils import format_million_rub
+    from utils import format_million_rub, format_period_ru
 
-    def _section_rank(s: str) -> int:
-        return 0 if str(s) == "Поступления" else 1
+    if not months:
+        return None
 
-    articles: list[tuple[str, str]] = []
-    for sec in sorted(g["_section"].unique(), key=_section_rank):
-        arts = (
-            g.loc[g["_section"] == sec, art]
-            .dropna()
-            .astype(str)
-            .unique()
-            .tolist()
-        )
-        for a in sorted(arts):
-            articles.append((str(sec), a))
+    g = g[g["_m"].isin(months)].copy()
+    if g.empty:
+        return None
+
+    _min_show = 50_000.0
+
+    def _fmt(v: float) -> str:
+        return format_million_rub(v, decimals=1) if abs(v) >= _min_show else ""
 
     rows: list[dict] = []
-    col_names: list[str] = []
     for m in months:
-        lbl = _bdds_month_label_short(m.to_timestamp())
-        for suffix, key in (("П", "_plan"), ("Ф", "_fact"), ("Δ", "_dev")):
-            cn = f"{lbl} {suffix}"
-            col_names.append(cn)
-
-    def _cell(plan_v: float, fact_v: float, kind: str) -> str:
-        if kind == "_plan":
-            return format_million_rub(plan_v, decimals=1) if abs(plan_v) >= 50_000 else ""
-        if kind == "_fact":
-            return format_million_rub(fact_v, decimals=1) if abs(fact_v) >= 50_000 else ""
-        dev = fact_v - plan_v
-        if abs(dev) < 50_000:
-            return ""
-        return format_million_rub(dev, decimals=1)
-
-    for sec, art_name in articles:
-        hdr = {"Статья": sec, "_row_kind": "project"}
-        for cn in col_names:
-            hdr[cn] = ""
-        rows.append(hdr)
-        body = {"Статья": f"  {art_name}", "_row_kind": ""}
-        sub = g[(g["_section"] == sec) & (g[art].astype(str) == art_name)]
-        for m in months:
-            lbl = _bdds_month_label_short(m.to_timestamp())
-            chunk = sub.loc[sub["_m"] == m]
-            pl = float(chunk["_plan"].sum()) if not chunk.empty else 0.0
-            fc = float(chunk["_fact"].sum()) if not chunk.empty else 0.0
-            body[f"{lbl} П"] = _cell(pl, fc, "_plan")
-            body[f"{lbl} Ф"] = _cell(pl, fc, "_fact")
-            body[f"{lbl} Δ"] = _cell(pl, fc, "_dev")
-        rows.append(body)
-
-    tot = {"Статья": "ИТОГО", "_row_kind": "total"}
-    for m in months:
-        lbl = _bdds_month_label_short(m.to_timestamp())
         chunk_m = g[g["_m"] == m]
-        pl = float(chunk_m["_plan"].sum())
-        fc = float(chunk_m["_fact"].sum())
-        tot[f"{lbl} П"] = _cell(pl, fc, "_plan")
-        tot[f"{lbl} Ф"] = _cell(pl, fc, "_fact")
-        tot[f"{lbl} Δ"] = _cell(pl, fc, "_dev")
-    rows.append(tot)
+        m_plan = float(chunk_m["_plan"].sum())
+        m_fact = float(chunk_m["_fact"].sum())
+        if abs(m_plan) + abs(m_fact) < _min_show:
+            continue
+        try:
+            m_lbl = format_period_ru(m)
+        except Exception:
+            m_lbl = _bdds_month_label_short(m.to_timestamp())
 
-    out = pd.DataFrame(rows)
-    return out
+        rows.append(
+            {
+                "Статья": m_lbl,
+                "План, млн. руб.": "",
+                "Факт, млн. руб.": "",
+                "Отклонение, млн. руб.": "",
+                "_row_kind": "project",
+            }
+        )
+
+        # Статьи месяца с ненулевым оборотом (родители и подлоты).
+        arts = (
+            chunk_m.groupby(art, dropna=False)[["_plan", "_fact"]]
+            .sum()
+            .reset_index()
+        )
+        arts["_abs"] = arts["_plan"].abs() + arts["_fact"].abs()
+        arts = arts[arts["_abs"] >= _min_show].sort_values("_abs", ascending=False)
+        for _, ar in arts.iterrows():
+            pl = float(ar["_plan"])
+            fc = float(ar["_fact"])
+            rows.append(
+                {
+                    "Статья": f"  {ar[art]}",
+                    "План, млн. руб.": _fmt(pl),
+                    "Факт, млн. руб.": _fmt(fc),
+                    "Отклонение, млн. руб.": _fmt(fc - pl),
+                    "_row_kind": "",
+                }
+            )
+
+        rows.append(
+            {
+                "Статья": f"  Итого {m_lbl}",
+                "План, млн. руб.": _fmt(m_plan),
+                "Факт, млн. руб.": _fmt(m_fact),
+                "Отклонение, млн. руб.": _fmt(m_fact - m_plan),
+                "_row_kind": "total",
+            }
+        )
+
+    if not rows:
+        return None
+
+    # Общий итог
+    all_plan = float(g["_plan"].sum())
+    all_fact = float(g["_fact"].sum())
+    rows.append(
+        {
+            "Статья": "ИТОГО",
+            "План, млн. руб.": _fmt(all_plan),
+            "Факт, млн. руб.": _fmt(all_fact),
+            "Отклонение, млн. руб.": _fmt(all_fact - all_plan),
+            "_row_kind": "total",
+        }
+    )
+    return pd.DataFrame(rows)
 
 
 def overlay_turnover_monthly_on_budget_summary(
@@ -1739,11 +1785,6 @@ def overlay_turnover_monthly_on_budget_summary(
     merged_any = False
     extra_rows: list[dict] = []
     for m in months:
-        try:
-            if int(m.year) >= 2025:
-                continue
-        except Exception:
-            pass
         chunk_m = g[g["_m"] == m]
         syn_plan = float(chunk_m["_plan"].sum())
         syn_fact = float(chunk_m["_fact"].sum())
