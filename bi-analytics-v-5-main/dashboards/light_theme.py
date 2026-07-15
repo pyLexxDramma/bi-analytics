@@ -1318,6 +1318,25 @@ html body.gdrs-light-preview [data-testid="metric-container"] [data-testid="stMe
   color: #111827 !important;
   -webkit-text-fill-color: #111827 !important;
 }
+/* KPI отклонения РД: цвет по знаку (выше общего stMetricValue светлой темы) */
+html body.gdrs-light-preview .st-key-rd_dev_metric_pos [data-testid="stMetricValue"],
+html body.gdrs-light-preview .st-key-rd_dev_metric_pos [data-testid="stMetricValue"] *,
+html body.gdrs-light-preview .st-key-rd_dev_metric_pos [data-testid="metric-container"] [data-testid="stMetricValue"] {
+  color: #15803d !important;
+  -webkit-text-fill-color: #15803d !important;
+}
+html body.gdrs-light-preview .st-key-rd_dev_metric_neg [data-testid="stMetricValue"],
+html body.gdrs-light-preview .st-key-rd_dev_metric_neg [data-testid="stMetricValue"] *,
+html body.gdrs-light-preview .st-key-rd_dev_metric_neg [data-testid="metric-container"] [data-testid="stMetricValue"] {
+  color: #b91c1c !important;
+  -webkit-text-fill-color: #b91c1c !important;
+}
+html body.gdrs-light-preview .st-key-rd_dev_metric_zero [data-testid="stMetricValue"],
+html body.gdrs-light-preview .st-key-rd_dev_metric_zero [data-testid="stMetricValue"] *,
+html body.gdrs-light-preview .st-key-rd_dev_metric_zero [data-testid="metric-container"] [data-testid="stMetricValue"] {
+  color: #6b7280 !important;
+  -webkit-text-fill-color: #6b7280 !important;
+}
 html body.gdrs-light-preview [data-testid="stForm"] [data-testid="stWidgetLabel"],
 html body.gdrs-light-preview [data-testid="stForm"] [data-testid="stWidgetLabel"] p,
 html body.gdrs-light-preview [data-testid="stForm"] label[data-testid="stWidgetLabel"] {

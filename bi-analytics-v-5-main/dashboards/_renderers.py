@@ -31510,35 +31510,23 @@ def _rd_kpi_plan_fact_deviation_today(
 def _render_rd_deviation_metric(label: str, deviation: float) -> None:
     """Метрика отклонения РД (план − факт).
 
-    Знаковая прокраска как в таблицах РД: «+» (отставание) — красный,
-    «−» (опережение) — зелёный, «0» — нейтральный. HTML + inline color,
-    чтобы не перекрывалось общим CSS st.metric (тёмная/светлая тема).
+    Нативная st.metric (выравнивание с соседними KPI). Цвет значения —
+    через scoped-ключ контейнера: «+» (отставание) красный, «−» зелёный,
+    «0» нейтральный. CSS: style.css + light_theme (выше общего stMetric).
     """
-    from html import escape as html_esc
-
-    from dashboards.light_theme import finance_chart_label_color
-
     try:
         d = int(round(float(deviation)))
     except (TypeError, ValueError):
         d = 0
+    disp = f"{d:+d}" if d else "0"
     if d > 0:
-        disp, color = f"{d:+d}", "#e74c3c"
+        tone = "neg"
     elif d < 0:
-        disp, color = f"{d:d}", "#27ae60"
+        tone = "pos"
     else:
-        disp, color = "0", "#8899aa"
-    label_color = finance_chart_label_color(dark="#c8d8ec", light="#64748b")
-    st.markdown(
-        f'<div class="pd-doc-dev-metric">'
-        f'<div class="pd-doc-dev-metric-label" style="color:{label_color}!important;'
-        f'-webkit-text-fill-color:{label_color}!important;">{html_esc(label)}</div>'
-        f'<div class="pd-doc-dev-metric-value" style="color:{color}!important;'
-        f'-webkit-text-fill-color:{color}!important;font-size:1.75rem;font-weight:600;">'
-        f"{html_esc(disp)}</div>"
-        f"</div>",
-        unsafe_allow_html=True,
-    )
+        tone = "zero"
+    with st.container(key=f"rd_dev_metric_{tone}"):
+        st.metric(label, disp)
 
 
 def _pd_detail_table_labels(
@@ -33252,15 +33240,35 @@ def _apply_rd_dynamics_line_chart_theme(
     fact_color: str = "#F39C12",
 ) -> None:
     _ax = _fin_chart_axis_color()
+    _ymax = 0.0
+    for _tr in fig.data or []:
+        _ys = getattr(_tr, "y", None)
+        if _ys is None:
+            continue
+        try:
+            for _v in _ys:
+                if _v is not None and pd.notna(_v):
+                    _ymax = max(_ymax, float(_v))
+        except (TypeError, ValueError):
+            pass
+    _y_top = (_ymax * 1.14) if _ymax > 0 else None
+    _yaxis_kw: dict = dict(
+        tickfont=dict(size=10, color=_ax),
+        title_font=dict(color=_ax),
+        rangemode="tozero",
+        automargin=True,
+    )
+    if _y_top is not None:
+        _yaxis_kw["range"] = [0, _y_top]
+    _m = fig.layout.margin
+    _mt = int(getattr(_m, "t", None) or 40)
     fig.update_layout(
         xaxis=dict(
             tickfont=dict(size=10, color=_ax),
             title_font=dict(color=_ax),
         ),
-        yaxis=dict(
-            tickfont=dict(size=10, color=_ax),
-            title_font=dict(color=_ax),
-        ),
+        yaxis=_yaxis_kw,
+        margin=dict(t=max(_mt, 64)),
     )
     for _tr in fig.data or []:
         _tn = str(getattr(_tr, "name", "") or "")
@@ -33268,6 +33276,10 @@ def _apply_rd_dynamics_line_chart_theme(
             _tr.textfont = dict(color=plan_color, size=20)
         elif "Факт" in _tn:
             _tr.textfont = dict(color=fact_color, size=20)
+        try:
+            _tr.cliponaxis = False
+        except Exception:
+            pass
 
 
 # ==================== DASHBOARD 8.7: Documentation ====================

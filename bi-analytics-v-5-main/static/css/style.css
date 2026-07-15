@@ -1424,16 +1424,25 @@ div[class*="st-key-pd_delay_project_chart"] [data-testid="stPlotlyChart"] {
 }
 
 /* KPI отклонения РД (план − факт): нативная st.metric, цвет значения по знаку.
-   «+» (отставание) — красный, «−» (опережение) / «0» — зелёный. */
-.st-key-rd_dev_metric_pos [data-testid="stMetricValue"],
-.st-key-rd_dev_metric_pos [data-testid="stMetricValue"] * {
+   «+» (отставание) — красный, «−» (опережение) — зелёный, «0» — нейтральный.
+   Специфичность выше общего [data-testid=stMetricValue]. */
+html body .st-key-rd_dev_metric_pos [data-testid="stMetricValue"],
+html body .st-key-rd_dev_metric_pos [data-testid="stMetricValue"] *,
+html body .st-key-rd_dev_metric_pos [data-testid="metric-container"] [data-testid="stMetricValue"] {
     color: #27AE60 !important;
     -webkit-text-fill-color: #27AE60 !important;
 }
-.st-key-rd_dev_metric_neg [data-testid="stMetricValue"],
-.st-key-rd_dev_metric_neg [data-testid="stMetricValue"] * {
+html body .st-key-rd_dev_metric_neg [data-testid="stMetricValue"],
+html body .st-key-rd_dev_metric_neg [data-testid="stMetricValue"] *,
+html body .st-key-rd_dev_metric_neg [data-testid="metric-container"] [data-testid="stMetricValue"] {
     color: #C0392B !important;
     -webkit-text-fill-color: #C0392B !important;
+}
+html body .st-key-rd_dev_metric_zero [data-testid="stMetricValue"],
+html body .st-key-rd_dev_metric_zero [data-testid="stMetricValue"] *,
+html body .st-key-rd_dev_metric_zero [data-testid="metric-container"] [data-testid="stMetricValue"] {
+    color: #8899aa !important;
+    -webkit-text-fill-color: #8899aa !important;
 }
 
 /* Ряд колонок: markdown и подписи внутри колонок (плашки над графиком и т.п.) */
@@ -1445,6 +1454,33 @@ div[class*="st-key-pd_delay_project_chart"] [data-testid="stPlotlyChart"] {
 .main [data-testid="stHorizontalBlock"] [data-testid="stMarkdownContainer"] p,
 .main [data-testid="stHorizontalBlock"] [data-testid="stMarkdownContainer"] span {
     color: #e8eef5 !important;
+}
+/* KPI отклонения ПД: не перекрашивать в «белый» цвет колонок */
+.main [data-testid="column"] [data-testid="stMarkdownContainer"] .pd-doc-dev-metric-label,
+.main [data-testid="stHorizontalBlock"] [data-testid="stMarkdownContainer"] .pd-doc-dev-metric-label,
+.main [data-testid="stMarkdownContainer"] .pd-doc-dev-metric-label {
+    color: #c8d8ec !important;
+    -webkit-text-fill-color: #c8d8ec !important;
+}
+.main [data-testid="column"] [data-testid="stMarkdownContainer"] .pd-doc-dev-metric-pos,
+.main [data-testid="stHorizontalBlock"] [data-testid="stMarkdownContainer"] .pd-doc-dev-metric-pos,
+.main [data-testid="stMarkdownContainer"] .pd-doc-dev-metric-pos {
+    color: #46d68a !important;
+    -webkit-text-fill-color: #46d68a !important;
+}
+.main [data-testid="column"] [data-testid="stMarkdownContainer"] .pd-doc-dev-metric-neg,
+.main [data-testid="stHorizontalBlock"] [data-testid="stMarkdownContainer"] .pd-doc-dev-metric-neg,
+.main [data-testid="stMarkdownContainer"] .pd-doc-dev-metric-neg {
+    color: #ff5454 !important;
+    -webkit-text-fill-color: #ff5454 !important;
+}
+.main [data-testid="column"] [data-testid="stMarkdownContainer"] .pd-doc-dev-metric-zero,
+.main [data-testid="stHorizontalBlock"] [data-testid="stMarkdownContainer"] .pd-doc-dev-metric-zero,
+.main [data-testid="stMarkdownContainer"] .pd-doc-dev-metric-zero,
+.main [data-testid="column"] [data-testid="stMarkdownContainer"] .pd-doc-dev-metric-value,
+.main [data-testid="stHorizontalBlock"] [data-testid="stMarkdownContainer"] .pd-doc-dev-metric-value {
+    color: inherit !important;
+    -webkit-text-fill-color: inherit !important;
 }
 
 /* Сегменты / pills / кнопки-переключатели (новые виджеты Streamlit) */
