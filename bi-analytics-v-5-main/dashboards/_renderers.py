@@ -3666,21 +3666,18 @@ def _gdrs_pie_contractors_figure(pie_df: pd.DataFrame, *, theme: str = "dark") -
         outside_labels=_has_outside,
     )
     _legend_h = int(_pie_layout["margin_bottom"])
-    # Фикс. квадратный холст → домен круга квадратный в пикселях → идеально ровный круг.
-    _label_pad = int(_txt_out * 2.0) if _has_outside else int(_txt_out * 0.8)
+    # Адаптивная ширина: donut в Plotly всегда вписывается в меньшую сторону домена и
+    # остаётся идеально круглым. Домен задаём долями; высоту фиксируем, ширина тянется
+    # на весь блок (как на других диаграммах) → круг центрируется, панель кнопок штатная.
     _top_pad = int(_txt_out * 2.2)
     _gap = int(_txt_out * 0.6)
-    _circle = 860
-    _canvas = _circle + 2 * _label_pad
+    _circle = 780
     _fig_h = _top_pad + _circle + _gap + _legend_h
-    _cx = _canvas / 2.0
-    _x0 = (_cx - _circle / 2.0) / _canvas
-    _x1 = (_cx + _circle / 2.0) / _canvas
     _y_top_px = _fig_h - _top_pad
     _y_bot_px = _fig_h - _top_pad - _circle
     _y0 = _y_bot_px / _fig_h
     _y1 = _y_top_px / _fig_h
-    _dx = (_x0, _x1)
+    _dx = (0.08, 0.92)
     _dy = (_y0, _y1)
     fig = go.Figure(
         data=[
@@ -3716,12 +3713,11 @@ def _gdrs_pie_contractors_figure(pie_df: pd.DataFrame, *, theme: str = "dark") -
 
     fig = apply_gdrs_chart_background(fig, _th, skip_uniformtext=True)
     # Форсируем точную геометрию после apply_gdrs_chart_background (иначе он ставит
-    # свои дефолтные margin/legend и круг снова «уплывает»). Фиксируем ширину и высоту:
-    # квадратный домен в пикселях гарантирует идеально ровный круг.
+    # свои дефолтные margin/legend). Ширину не фиксируем — use_container_width тянет
+    # фигуру на весь блок, круг центрируется по домену x=[0.08,0.92].
     fig.update_layout(
-        width=_canvas,
         height=_fig_h,
-        autosize=False,
+        autosize=True,
         margin=dict(l=0, r=0, t=0, b=0),
         legend=dict(
             orientation="h",
@@ -26095,15 +26091,14 @@ def _gdrs_render_contractors_pie_block(
         )
     try:
         fig3 = _gdrs_pie_contractors_figure(_pie_chart_df, theme=theme)
-        from dashboards.gdrs_theme import get_gdrs_theme
-
-        _gdrs_render_pie_chart(
+        # Как на других диаграммах: нативный st.plotly_chart на всю ширину блока —
+        # штатная панель кнопок и центрирование. Круг остаётся ровным (donut вписан
+        # в меньшую сторону домена).
+        _gdrs_st_plotly_chart(
             st,
             fig3,
-            width_px=int(fig3.layout.width or 940),
-            height_px=int(fig3.layout.height or 1100),
-            theme=get_gdrs_theme(theme),
             key=f"gdrs_pie_{key_suffix}" if key_suffix else "gdrs_pie",
+            use_container_width=True,
         )
     except Exception as _e:
         st.warning(f"Plotly недоступен: {_e}")

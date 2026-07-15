@@ -1312,6 +1312,34 @@ def _is_gdrs_excluded_plan_application(contract_name: object) -> bool:
     return _is_gdrs_termination_application_name(contract_name)
 
 
+# Контрагенты, которых по решению заказчика не выводим в ГДРС (не трудовые ресурсы:
+# поставка/сервис — «Охрана труда, спецодежда» и т.п.). Сравнение по нормализованному
+# имени (normalize_name), поэтому регистр/порядок слов/«ООО» не важны.
+GDRS_EXCLUDED_CONTRACTOR_NAMES: frozenset[str] = frozenset(
+    {
+        normalize_name("Строй Альянс"),
+    }
+)
+
+
+def gdrs_is_excluded_contractor(contractor_name: object) -> bool:
+    """True, если контрагента нужно скрыть из ГДРС (по стоп-листу имён)."""
+    nn = normalize_name(str(contractor_name or ""))
+    return bool(nn) and nn in GDRS_EXCLUDED_CONTRACTOR_NAMES
+
+
+def gdrs_drop_excluded_contractors(df: Optional[pd.DataFrame]) -> pd.DataFrame:
+    """Убрать строки контрагентов из стоп-листа (по `contractor_name`)."""
+    if df is None or df.empty or "contractor_name" not in df.columns:
+        return df
+    if not GDRS_EXCLUDED_CONTRACTOR_NAMES:
+        return df
+    keep = ~df["contractor_name"].map(gdrs_is_excluded_contractor)
+    if bool(keep.all()):
+        return df
+    return df.loc[keep].copy()
+
+
 def _gdrs_valid_contract_date(val: object) -> Optional[pd.Timestamp]:
     sentinel = pd.Timestamp("0001-01-01")
     ts = _fast_parse_date(val)
@@ -4128,10 +4156,12 @@ def build_main_table(
         contractors=contractors,
     )
     fact = gdrs_filter_fact_by_termination(fact, term_index)
+    fact = gdrs_drop_excluded_contractors(fact)
     fact = _gdrs_add_pair_keys(fact, kontr_index, dedupe_fact=True)
 
     plan_work = plan.copy() if plan is not None and not plan.empty else pd.DataFrame()
     if not plan_work.empty:
+        plan_work = gdrs_drop_excluded_contractors(plan_work)
         plan_work = _gdrs_add_pair_keys(plan_work, kontr_index, dedupe_fact=False)
 
     plan_col = "plan_workers" if vid.casefold() == "рабочие" else "plan_equipment"
@@ -5220,6 +5250,7 @@ def _gdrs_cached_enriched_fact(
         int(version_id), db_mtime, dogovor_sources_sig
     )
     long_fact = gdrs_filter_fact_by_termination(long_fact, term_index)
+    long_fact = gdrs_drop_excluded_contractors(long_fact)
     return long_fact
 
 
