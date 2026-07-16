@@ -3512,6 +3512,211 @@ _PLOTLY_CONFIG = {
     "scrollZoom": True,
 }
 
+# Полный modebar как у bar (zoom/pan/±/reset/PNG). У чистого pie Plotly по умолчанию
+# оставляет только камеру — форсируем тот же набор кнопок.
+_PLOTLY_MODEBAR_BUTTONS_FULL = [
+    [
+        "zoom2d",
+        "pan2d",
+        "zoomIn2d",
+        "zoomOut2d",
+        "autoScale2d",
+        "resetScale2d",
+        "toImage",
+    ]
+]
+_PLOTLY_CONFIG_FULL_MODEBAR = {
+    **_PLOTLY_CONFIG,
+    "modeBarButtons": _PLOTLY_MODEBAR_BUTTONS_FULL,
+}
+
+
+def _figure_has_pie_trace(fig: go.Figure) -> bool:
+    try:
+        return any(getattr(tr, "type", None) == "pie" for tr in (fig.data or ()))
+    except Exception:
+        return False
+
+
+def _ensure_pie_full_modebar(fig: go.Figure) -> go.Figure:
+    """Невидимый cartesian-якорь: Plotly вешает на круговую тот же modebar, что у bar."""
+    if fig is None or not _figure_has_pie_trace(fig):
+        return fig
+    try:
+        for tr in fig.data or ():
+            if (
+                getattr(tr, "type", None) == "scatter"
+                and getattr(tr, "meta", None) == "_bi_pie_modebar_anchor"
+            ):
+                return fig
+    except Exception:
+        pass
+    # Базовый domain круга — чтобы zoom/pan осей визуально масштабировали pie.
+    _pie_dx = [0.12, 0.88]
+    _pie_dy = [0.28, 0.98]
+    try:
+        for tr in fig.data or ():
+            if getattr(tr, "type", None) != "pie":
+                continue
+            dom = getattr(tr, "domain", None)
+            if dom is None:
+                continue
+            _x = getattr(dom, "x", None) or (dom.get("x") if isinstance(dom, dict) else None)
+            _y = getattr(dom, "y", None) or (dom.get("y") if isinstance(dom, dict) else None)
+            if _x is not None and len(_x) == 2:
+                _pie_dx = [float(_x[0]), float(_x[1])]
+            if _y is not None and len(_y) == 2:
+                _pie_dy = [float(_y[0]), float(_y[1])]
+            break
+    except Exception:
+        pass
+    fig.add_trace(
+        go.Scatter(
+            x=[0.0, 1.0],
+            y=[0.0, 1.0],
+            mode="markers",
+            marker=dict(size=1, opacity=0),
+            showlegend=False,
+            hoverinfo="skip",
+            cliponaxis=False,
+            meta="_bi_pie_modebar_anchor",
+        )
+    )
+    # Оси на том же paper-domain, что и круг: zoom/pan меняют range → пересчёт pie.domain.
+    _meta_prev: dict = {}
+    try:
+        _raw_meta = getattr(fig.layout, "meta", None)
+        if isinstance(_raw_meta, dict):
+            _meta_prev = dict(_raw_meta)
+    except Exception:
+        _meta_prev = {}
+    _meta_prev["_bi_pie_base_domain"] = {
+        "x": list(_pie_dx),
+        "y": list(_pie_dy),
+    }
+    fig.update_layout(
+        xaxis=dict(
+            visible=False,
+            showgrid=False,
+            zeroline=False,
+            showticklabels=False,
+            ticks="",
+            range=[0.0, 1.0],
+            fixedrange=False,
+            automargin=False,
+            domain=list(_pie_dx),
+            anchor="y",
+            uirevision="bi_pie_modebar",
+        ),
+        yaxis=dict(
+            visible=False,
+            showgrid=False,
+            zeroline=False,
+            showticklabels=False,
+            ticks="",
+            range=[0.0, 1.0],
+            fixedrange=False,
+            automargin=False,
+            domain=list(_pie_dy),
+            anchor="x",
+            scaleanchor="x",
+            scaleratio=1,
+            uirevision="bi_pie_modebar",
+        ),
+        meta=_meta_prev,
+    )
+    return fig
+
+
+def _inject_pie_modebar_zoom_sync() -> None:
+    """Синхронизация pie.domain с zoom/pan осей (кнопки modebar на круговой)."""
+    components.html(
+        """
+<script>
+(function() {
+  var root = window.parent || window;
+  if (root._biPieModebarZoomSyncV2) return;
+  root._biPieModebarZoomSyncV2 = true;
+  var doc = root.document;
+  function baseDomain(gd) {
+    try {
+      var m = (gd.layout && gd.layout.meta) || {};
+      if (m._bi_pie_base_domain) return m._bi_pie_base_domain;
+    } catch (e) {}
+    return {x: [0.12, 0.88], y: [0.28, 0.98]};
+  }
+  function mapRangeToDomain(baseLo, baseHi, r0, r1) {
+    var span = Math.max(1e-9, r1 - r0);
+    var mid = (baseLo + baseHi) / 2;
+    var half = (baseHi - baseLo) / 2;
+    var newHalf = half / span;
+    var shift = ((0.5 - (r0 + r1) / 2) / span) * (baseHi - baseLo);
+    var lo = mid - newHalf + shift;
+    var hi = mid + newHalf + shift;
+    if (hi - lo < 0.08) {
+      var c = (lo + hi) / 2;
+      lo = c - 0.04;
+      hi = c + 0.04;
+    }
+    return [lo, hi];
+  }
+  function syncPie(gd) {
+    if (!gd || !gd.data || gd._biPieSyncing) return;
+    var hasPie = false, hasAnchor = false;
+    for (var i = 0; i < gd.data.length; i++) {
+      var t = gd.data[i];
+      if (!t) continue;
+      if (t.type === 'pie') hasPie = true;
+      if (t.type === 'scatter' && t.meta === '_bi_pie_modebar_anchor') hasAnchor = true;
+    }
+    if (!hasPie || !hasAnchor) return;
+    var xa = (gd._fullLayout && gd._fullLayout.xaxis) || {};
+    var ya = (gd._fullLayout && gd._fullLayout.yaxis) || {};
+    var xr = xa.range || [0, 1];
+    var yr = ya.range || [0, 1];
+    var base = baseDomain(gd);
+    var dx = mapRangeToDomain(base.x[0], base.x[1], +xr[0], +xr[1]);
+    var dy = mapRangeToDomain(base.y[0], base.y[1], +yr[0], +yr[1]);
+    var idxs = [];
+    for (var j = 0; j < gd.data.length; j++) {
+      if (gd.data[j] && gd.data[j].type === 'pie') idxs.push(j);
+    }
+    var Plotly = root.Plotly || window.Plotly;
+    if (Plotly && idxs.length) {
+      gd._biPieSyncing = true;
+      var done = function() { gd._biPieSyncing = false; };
+      try {
+        var p = Plotly.restyle(gd, {domain: [{x: dx, y: dy}]}, idxs);
+        if (p && p.then) p.then(done, done); else done();
+      } catch (e) { done(); }
+    }
+  }
+  function bind(gd) {
+    if (!gd || gd._biPieZoomBound) return;
+    gd._biPieZoomBound = true;
+    gd.on('plotly_relayout', function() { syncPie(gd); });
+  }
+  function scan(d) {
+    if (!d) return;
+    d.querySelectorAll('.js-plotly-plot').forEach(function(gd) { bind(gd); });
+  }
+  function walk() {
+    try { scan(doc); } catch (e) {}
+    try {
+      doc.querySelectorAll('iframe').forEach(function(frame) {
+        try { scan(frame.contentDocument); } catch (e) {}
+      });
+    } catch (e) {}
+  }
+  walk();
+  root.setInterval(walk, 1000);
+})();
+</script>
+        """,
+        height=0,
+        width=0,
+    )
+
 
 def _series_is_non_numeric_non_date(x) -> bool:
     """True, если ось по значениям похожа на категории/строки (не числа и не даты)."""
@@ -4098,8 +4303,10 @@ def _resync_plotly_chart_theme(fig) -> None:
                 size=u.CHART_LAYOUT_FONT_SIZE,
             ),
         )
-        fig.update_xaxes(**ax_kw)
-        fig.update_yaxes(**ax_kw)
+        # У круговых ось — служебный якорь modebar; не красим сетку/подписи.
+        if not _figure_has_pie_trace(fig):
+            fig.update_xaxes(**ax_kw)
+            fig.update_yaxes(**ax_kw)
     except Exception:
         pass
 
@@ -7235,7 +7442,13 @@ def dashboard_reasons_of_deviation(df, hide_shared_filters=False, building_col=N
             ),
         )
         fig = apply_chart_background(fig)
-        render_chart(fig, caption_below="")
+        fig = _ensure_pie_full_modebar(fig)
+        _inject_pie_modebar_zoom_sync()
+        render_chart(
+            fig,
+            caption_below="",
+            plotly_config_extra=_PLOTLY_CONFIG_FULL_MODEBAR,
+        )
 
     # Подпись текущего проекта (макет правок); при «Все» не показываем — дублирует фильтр
     if hide_shared_filters:
