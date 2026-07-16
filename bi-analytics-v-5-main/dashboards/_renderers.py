@@ -17304,23 +17304,109 @@ def _rd_dynamics_plan_increment_series(
     return out
 
 
-def _rd_monthly_sections_aggregate(month_df: pd.DataFrame) -> pd.DataFrame:
-    """Агрегат по месяцам плановой даты: plan / done / overdue."""
+def _pd_monthly_dedupe_by_cipher(
+    month_df: pd.DataFrame,
+    *,
+    cipher_col: str | None,
+    project_col: str | None = None,
+) -> pd.DataFrame:
+    """Один раздел на шифр (и проект): в MSP Ленинского одни и те же разделы
+    дублируются со старым и новым БО → иначе 17+17 на графике при 17 уникальных.
+
+    Берём строку с максимальной датой плана; просрочка/факт — OR по группе.
+    """
+    if month_df is None or getattr(month_df, "empty", True):
+        return month_df
+    if not cipher_col or cipher_col not in month_df.columns:
+        return month_df
+    out = month_df.copy()
+    _ck = out[cipher_col].fillna("").astype(str).str.strip()
+    _ck = _ck.mask(_ck.str.lower().isin({"", "nan", "none", "<na>"}), "")
+    if project_col and project_col in out.columns:
+        _pk = out[project_col].fillna("").astype(str).str.strip()
+        out["_pd_dedupe_key"] = _pk + "||" + _ck
+    else:
+        out["_pd_dedupe_key"] = _ck
+    # Строки без шифра не схлопываем между собой.
+    _empty = out["_pd_dedupe_key"].isin({"", "||"})
+    keep_empty = out.loc[_empty].copy()
+    has_key = out.loc[~_empty].copy()
+    if has_key.empty:
+        return month_df.drop(columns=["_pd_dedupe_key"], errors="ignore")
+
+    rows: list[pd.Series] = []
+    for _, g in has_key.groupby("_pd_dedupe_key", sort=False):
+        _ord = g["_plan_end_dt"]
+        i = _ord.idxmax() if _ord.notna().any() else g.index[0]
+        row = g.loc[i].copy()
+        if "_pd_row_overdue" in g.columns:
+            row["_pd_row_overdue"] = int(
+                pd.to_numeric(g["_pd_row_overdue"], errors="coerce").fillna(0).gt(0).any()
+            )
+        if "_rd_fact_n" in g.columns:
+            row["_rd_fact_n"] = float(
+                pd.to_numeric(g["_rd_fact_n"], errors="coerce").fillna(0).max()
+            )
+        if "_pd_row_fact" in g.columns:
+            row["_pd_row_fact"] = int(
+                pd.to_numeric(g["_pd_row_fact"], errors="coerce").fillna(0).gt(0).any()
+            )
+        # Пересчёт после OR: иначе «факт вовремя» остаётся от строки с max БО
+        # (часто 0), а в график уходит сырой факт → зелёные 18 + красные 17.
+        if "_pd_row_fact" in row.index and "_pd_row_overdue" in row.index:
+            row["_pd_row_fact_ontime"] = int(
+                int(row["_pd_row_fact"]) > 0 and int(row["_pd_row_overdue"]) <= 0
+            )
+        rows.append(row)
+    deduped = pd.DataFrame(rows)
+    merged = pd.concat([deduped, keep_empty], ignore_index=True)
+    out_m = merged.drop(columns=["_pd_dedupe_key"], errors="ignore")
+    if (
+        not out_m.empty
+        and "_pd_row_fact" in out_m.columns
+        and "_pd_row_overdue" in out_m.columns
+    ):
+        out_m["_pd_row_fact_ontime"] = (
+            (pd.to_numeric(out_m["_pd_row_fact"], errors="coerce").fillna(0) > 0)
+            & (pd.to_numeric(out_m["_pd_row_overdue"], errors="coerce").fillna(0) <= 0)
+        ).astype(int)
+    return out_m
+
+
+def _rd_monthly_sections_aggregate(
+    month_df: pd.DataFrame,
+    *,
+    overdue_col: str | None = None,
+) -> pd.DataFrame:
+    """Агрегат по месяцам плановой даты: plan / done / overdue.
+
+    ``overdue_col`` — явная просрочка по строке (ПД: Finish > БО). Тогда
+    «Выполнено» только у непросроченных с фактом; просроченные всегда в
+    красном сегменте (в т.ч. «сданные с опозданием»), как на карточке KPI.
+    Без колонки — прежняя логика РД: overdue = план − факт при прошедшей дате.
+    """
     if month_df is None or getattr(month_df, "empty", True):
         return pd.DataFrame()
     today_ts = pd.Timestamp(date.today())
     mdf = month_df.copy()
     mdf["_month"] = mdf["_plan_end_dt"].dt.to_period("M")
-    mdf["_done_n"] = np.where(
-        mdf["_rd_fact_n"] > 0,
-        np.minimum(mdf["_rd_plan_n"], mdf["_rd_fact_n"]),
-        0.0,
-    )
-    mdf["_overdue_n"] = np.where(
-        (mdf["_rd_plan_n"] > mdf["_done_n"]) & (mdf["_plan_end_dt"] < today_ts),
-        mdf["_rd_plan_n"] - mdf["_done_n"],
-        0.0,
-    )
+    if overdue_col and overdue_col in mdf.columns:
+        _ov = pd.to_numeric(mdf[overdue_col], errors="coerce").fillna(0.0).gt(0)
+        _fact = pd.to_numeric(mdf["_rd_fact_n"], errors="coerce").fillna(0.0)
+        _plan = pd.to_numeric(mdf["_rd_plan_n"], errors="coerce").fillna(0.0)
+        mdf["_overdue_n"] = np.where(_ov, _plan, 0.0)
+        mdf["_done_n"] = np.where(~_ov & (_fact > 0), np.minimum(_plan, _fact), 0.0)
+    else:
+        mdf["_done_n"] = np.where(
+            mdf["_rd_fact_n"] > 0,
+            np.minimum(mdf["_rd_plan_n"], mdf["_rd_fact_n"]),
+            0.0,
+        )
+        mdf["_overdue_n"] = np.where(
+            (mdf["_rd_plan_n"] > mdf["_done_n"]) & (mdf["_plan_end_dt"] < today_ts),
+            mdf["_rd_plan_n"] - mdf["_done_n"],
+            0.0,
+        )
     monthly = (
         mdf.groupby("_month", as_index=False)
         .agg(
@@ -20499,11 +20585,20 @@ def dashboard_rd_delay(df, is_pd: bool = False):
             _af_dt = filtered_df["_fact_end_dt"].reindex(filtered_df.index)
             _ts_pd = pd.Timestamp(pd_report_date).normalize()
             _pct_pd_col = _pd_msp_pct_complete_col(filtered_df)
-            _pc_pd = (
-                pd.to_numeric(filtered_df[_pct_pd_col], errors="coerce").fillna(0.0)
-                if _pct_pd_col and _pct_pd_col in filtered_df.columns
-                else pd.Series(0.0, index=filtered_df.index)
-            )
+            if _pct_pd_col and _pct_pd_col in filtered_df.columns:
+                _pc_raw = (
+                    filtered_df[_pct_pd_col]
+                    .astype(str)
+                    .str.replace("%", "", regex=False)
+                    .str.replace(",", ".", regex=False)
+                    .str.strip()
+                )
+                _pc_pd = pd.to_numeric(_pc_raw, errors="coerce").fillna(0.0)
+                # Доля 0..1 → проценты (как «1» = 100%).
+                if _pc_pd.gt(0).any() and _pc_pd.max() <= 1.0 + 1e-9:
+                    _pc_pd = _pc_pd * 100.0
+            else:
+                _pc_pd = pd.Series(0.0, index=filtered_df.index)
             _pd_plan_fin_dt = _pd_delay_plan_finish_dt_series(
                 filtered_df,
                 baseline_col=_bfin,
@@ -20528,6 +20623,50 @@ def dashboard_rd_delay(df, is_pd: bool = False):
                 & _sf_dt.notna()
                 & (_pd_sf_n > _pd_bf_n)
             ).astype(int)
+            # Факт для stacked-графика: только вовремя (иначе 100%+просрочка
+            # дублируют длину бара: зелёные 35 + красные 17).
+            filtered_df["_pd_row_fact_ontime"] = (
+                (filtered_df["_pd_row_fact"].astype(int) > 0)
+                & (filtered_df["_pd_row_overdue"].astype(int) <= 0)
+            ).astype(int)
+            # Дубли шифра — только для KPI/карточек/сводки (Gantt/деталка без среза).
+            _pd_dedupe_cipher = (
+                _msp_cipher_col
+                if _msp_cipher_col and _msp_cipher_col in filtered_df.columns
+                else find_column(
+                    filtered_df, ["abbreviation", "Шифр_ПД_и_РД", "Шифр"]
+                )
+            )
+            _pd_kpi_df = filtered_df.copy()
+            _pd_kpi_df["_plan_end_dt"] = pd.to_datetime(
+                _pd_plan_fin_dt.reindex(filtered_df.index), errors="coerce"
+            )
+            _pd_kpi_df = _pd_monthly_dedupe_by_cipher(
+                _pd_kpi_df,
+                cipher_col=_pd_dedupe_cipher,
+                project_col=(
+                    project_col if project_col and project_col in _pd_kpi_df.columns else None
+                ),
+            )
+            for _c in (
+                "_pd_row_plan",
+                "_pd_row_fact",
+                "_pd_row_overdue",
+            ):
+                if _c in _pd_kpi_df.columns:
+                    _pd_kpi_df[_c] = (
+                        pd.to_numeric(_pd_kpi_df[_c], errors="coerce")
+                        .fillna(0)
+                        .astype(int)
+                    )
+            if (
+                "_pd_row_fact" in _pd_kpi_df.columns
+                and "_pd_row_overdue" in _pd_kpi_df.columns
+            ):
+                _pd_kpi_df["_pd_row_fact_ontime"] = (
+                    (_pd_kpi_df["_pd_row_fact"] > 0)
+                    & (_pd_kpi_df["_pd_row_overdue"] <= 0)
+                ).astype(int)
 
             if show_by_section:
                 _cipher_pd = (
@@ -20578,12 +20717,17 @@ def dashboard_rd_delay(df, is_pd: bool = False):
                     return
                 fig = _pd_delay_section_duration_figure(_sec_rows, y_col="_pd_chart_y")
                 _render_pd_delay_duration_chart(fig, f"Просрочка выдачи {doc_code}")
-                if project_col and project_col in filtered_df.columns:
+                _pd_fact_agg = (
+                    "_pd_row_fact_ontime"
+                    if "_pd_row_fact_ontime" in _pd_kpi_df.columns
+                    else "_pd_row_fact"
+                )
+                if project_col and project_col in _pd_kpi_df.columns:
                     chart_data = (
-                        filtered_df.groupby(project_col, as_index=False)
+                        _pd_kpi_df.groupby(project_col, as_index=False)
                         .agg(
                             _pd_plan_cnt=("_pd_row_plan", "sum"),
-                            _pd_fact_cnt=("_pd_row_fact", "sum"),
+                            _pd_fact_cnt=(_pd_fact_agg, "sum"),
                             _pd_overdue_cnt=("_pd_row_overdue", "sum"),
                         )
                         .rename(columns={project_col: "Проект"})
@@ -20594,24 +20738,31 @@ def dashboard_rd_delay(df, is_pd: bool = False):
                     )
                 else:
                     chart_data = filtered_df[
-                        ["_pd_chart_y", "_pd_row_plan", "_pd_row_fact", "_pd_row_overdue"]
+                        ["_pd_chart_y", "_pd_row_plan", _pd_fact_agg, "_pd_row_overdue"]
                     ].copy()
+                    # Без project_col дедуп по шифру на уровне подписей раздела.
+                    chart_data = chart_data.drop_duplicates(subset=["_pd_chart_y"], keep="first")
                     chart_data = chart_data.rename(
                         columns={
                             "_pd_chart_y": "Раздел",
                             "_pd_row_plan": "_pd_plan_cnt",
-                            "_pd_row_fact": "_pd_fact_cnt",
+                            _pd_fact_agg: "_pd_fact_cnt",
                             "_pd_row_overdue": "_pd_overdue_cnt",
                         }
                     )
                     y_column = "Раздел"
             else:
-                if project_col and project_col in filtered_df.columns:
+                _pd_fact_agg = (
+                    "_pd_row_fact_ontime"
+                    if "_pd_row_fact_ontime" in _pd_kpi_df.columns
+                    else "_pd_row_fact"
+                )
+                if project_col and project_col in _pd_kpi_df.columns:
                     chart_data = (
-                        filtered_df.groupby(project_col, as_index=False)
+                        _pd_kpi_df.groupby(project_col, as_index=False)
                         .agg(
                             _pd_plan_cnt=("_pd_row_plan", "sum"),
-                            _pd_fact_cnt=("_pd_row_fact", "sum"),
+                            _pd_fact_cnt=(_pd_fact_agg, "sum"),
                             _pd_overdue_cnt=("_pd_row_overdue", "sum"),
                         )
                         .rename(columns={project_col: "Проект"})
@@ -20670,17 +20821,41 @@ def dashboard_rd_delay(df, is_pd: bool = False):
                 )
                 _pd_m_src = _pd_m_src[_pd_m_src["_plan_end_dt"].notna()].copy()
                 if not _pd_m_src.empty:
-                    _pd_m_src["_rd_plan_n"] = pd.to_numeric(
-                        _pd_m_src.get("_pd_row_plan", 1), errors="coerce"
-                    ).fillna(1.0).clip(lower=0.0)
+                    # По месяцу планового срока — каждый раздел = 1 (не «due»-флаг).
+                    _pd_m_src["_rd_plan_n"] = 1.0
                     _pd_m_src["_rd_fact_n"] = pd.to_numeric(
                         _pd_m_src.get("_pd_row_fact", 0), errors="coerce"
-                    ).fillna(0.0).clip(lower=0.0)
-                    # Для агрегата: факт не больше плана по строке.
-                    _pd_m_src["_rd_fact_n"] = np.minimum(
-                        _pd_m_src["_rd_fact_n"], _pd_m_src["_rd_plan_n"]
+                    ).fillna(0.0).clip(lower=0.0, upper=1.0)
+                    _pd_m_cipher = (
+                        _msp_cipher_col
+                        if _msp_cipher_col and _msp_cipher_col in _pd_m_src.columns
+                        else find_column(
+                            _pd_m_src, ["abbreviation", "Шифр_ПД_и_РД", "Шифр"]
+                        )
                     )
-                    _pd_monthly = _rd_monthly_sections_aggregate(_pd_m_src)
+                    # Дубли шифра (старый/новый БО) → одна строка, просрочка OR.
+                    _pd_m_src = _pd_monthly_dedupe_by_cipher(
+                        _pd_m_src,
+                        cipher_col=_pd_m_cipher,
+                        project_col=project_col if project_col in _pd_m_src.columns else None,
+                    )
+                    # После OR факт/просрочки обновить вход агрегата по месяцам.
+                    if "_pd_row_fact" in _pd_m_src.columns:
+                        _pd_m_src["_rd_fact_n"] = (
+                            pd.to_numeric(_pd_m_src["_pd_row_fact"], errors="coerce")
+                            .fillna(0.0)
+                            .clip(lower=0.0, upper=1.0)
+                        )
+                    if "_pd_row_overdue" in _pd_m_src.columns:
+                        _pd_m_src["_pd_row_overdue"] = (
+                            pd.to_numeric(_pd_m_src["_pd_row_overdue"], errors="coerce")
+                            .fillna(0)
+                            .astype(int)
+                        )
+                    # Просрочка как на карточке KPI: Finish > Базовое окончание.
+                    _pd_monthly = _rd_monthly_sections_aggregate(
+                        _pd_m_src, overdue_col="_pd_row_overdue"
+                    )
                     if _pd_monthly is not None and not _pd_monthly.empty:
                         # От текущего месяца к более ранним (сверху вниз на горизонт. графике).
                         try:
@@ -33119,7 +33294,7 @@ def _pd_delay_plan_fact_figure(
     fact_col: str = "_pd_fact_cnt",
     overdue_col: str = "_pd_dev_cnt",
 ) -> "go.Figure":
-    """По проекту (ТЗ): жёлтый план, зелёный факт 100%, красное отклонение (план − факт)."""
+    """По проекту: жёлтый план, зелёный факт вовремя, красная просрочка (Finish > БО)."""
     import plotly.graph_objects as go
 
     work = rows.copy()
@@ -33135,6 +33310,11 @@ def _pd_delay_plan_fact_figure(
     overdue_v = pd.to_numeric(work[overdue_col], errors="coerce").fillna(0.0).clip(
         lower=0.0
     )
+    # Не допускаем зелёный+красный > плана из‑за двойного счёта.
+    _stack = fact_v + overdue_v
+    _over = _stack > plan_v + 1e-9
+    if bool(_over.any()):
+        fact_v = fact_v.where(~_over, (plan_v - overdue_v).clip(lower=0.0))
 
     def _wrap_label(text: str, width: int = 26) -> str:
         words = str(text).split()
@@ -33182,7 +33362,7 @@ def _pd_delay_plan_fact_figure(
     )
     fig.add_trace(
         go.Bar(
-            name="Факт (100%, разделы ПД)",
+            name="Факт вовремя (100%)",
             orientation="h",
             y=y_labels,
             x=fact_v,
@@ -33191,13 +33371,13 @@ def _pd_delay_plan_fact_figure(
             textposition="none",
             texttemplate=" ",
             cliponaxis=False,
-            hovertemplate="%{y}<br>Факт: %{x:.0f} док.<extra></extra>",
+            hovertemplate="%{y}<br>Факт вовремя: %{x:.0f} док.<extra></extra>",
         )
     )
     red_base = fact_v.tolist()
     fig.add_trace(
         go.Bar(
-            name="Отклонение (план − факт)",
+            name="Просрочка (окончание > базовое)",
             orientation="h",
             y=y_labels,
             x=overdue_v,
@@ -33206,7 +33386,7 @@ def _pd_delay_plan_fact_figure(
             textposition="none",
             texttemplate=" ",
             cliponaxis=False,
-            hovertemplate="%{y}<br>Отклонение: %{x:.0f} док.<extra></extra>",
+            hovertemplate="%{y}<br>Просрочка: %{x:.0f} док.<extra></extra>",
         )
     )
     for y_lbl, fv, ov in zip(y_labels, fact_v.tolist(), overdue_v.tolist()):
