@@ -6050,7 +6050,7 @@ def _deviations_building_select_options(
     *,
     project_state_key: str = "devcombo_project",
     block_state_key: str = "devcombo_block",
-    period_session_key: str = "devcombo_period_month",
+    period_session_key: str = "devcombo_period_range",
     reason_session_key: str = "devcombo_reason",
     building_col: str | None = None,
 ) -> list[str]:
@@ -6113,7 +6113,7 @@ def _deviations_render_building_selectbox(
 def _deviations_filter_df_by_period_range(
     filtered_df: pd.DataFrame, range_key: str
 ) -> pd.DataFrame:
-    """Срез по календарному диапазону из session_state (plan end / plan_month)."""
+    """Срез по календарному диапазону из session_state (plan end / plan_month / snapshot_date)."""
     _dr = st.session_state.get(range_key)
     if isinstance(_dr, tuple) and len(_dr) == 2:
         _p_start, _p_end = _dr[0], _dr[1]
@@ -6127,21 +6127,20 @@ def _deviations_filter_df_by_period_range(
         return filtered_df
     if _start_dt > _end_dt:
         _start_dt, _end_dt = _end_dt, _start_dt
+    _start_day = _start_dt.normalize()
+    _end_day = _end_dt.normalize() + pd.Timedelta(days=1) - pd.Timedelta(nanoseconds=1)
     if "plan end" in filtered_df.columns:
         _pe = _deviations_coerce_datetime(filtered_df["plan end"])
         _mask = _pe.notna()
-        if not _mask.any():
-            return filtered_df
-        # Срез по фактической дате (день), а не по месяцу: иначе выбор 05.05/19.05
-        # внутри мая давал бы тот же результат, что и весь месяц — число отклонений
-        # не пересчитывалось бы.
-        _start_day = _start_dt.normalize()
-        _end_day = _end_dt.normalize() + pd.Timedelta(days=1) - pd.Timedelta(nanoseconds=1)
-        _pe_day = _pe.loc[_mask]
-        _keep = (_pe_day >= _start_day) & (_pe_day <= _end_day)
-        out_mask = pd.Series(False, index=filtered_df.index)
-        out_mask.loc[_mask] = _keep
-        return filtered_df[out_mask].copy()
+        if _mask.any():
+            # Срез по фактической дате (день), а не по месяцу: иначе выбор 05.05/19.05
+            # внутри мая давал бы тот же результат, что и весь месяц — число отклонений
+            # не пересчитывалось бы.
+            _pe_day = _pe.loc[_mask]
+            _keep = (_pe_day >= _start_day) & (_pe_day <= _end_day)
+            out_mask = pd.Series(False, index=filtered_df.index)
+            out_mask.loc[_mask] = _keep
+            return filtered_df[out_mask].copy()
     if "plan_month" in filtered_df.columns:
         _pm = filtered_df["plan_month"]
         _pf = _start_dt.to_period("M")
@@ -6149,7 +6148,130 @@ def _deviations_filter_df_by_period_range(
         return filtered_df[
             _pm.notna() & (_pm >= _pf) & (_pm <= _pt)
         ].copy()
+    if "snapshot_date" in filtered_df.columns:
+        _sd = pd.to_datetime(filtered_df["snapshot_date"], errors="coerce")
+        _mask = _sd.notna()
+        if not _mask.any():
+            return filtered_df
+        _sd_day = _sd.loc[_mask]
+        _keep = (_sd_day >= _start_day) & (_sd_day <= _end_day)
+        out_mask = pd.Series(False, index=filtered_df.index)
+        out_mask.loc[_mask] = _keep
+        return filtered_df[out_mask].copy()
     return filtered_df
+
+
+def _deviations_period_range_key(session_key: str) -> Optional[str]:
+    """Ключ календарного диапазона «Период» для «Причины отклонений»; иначе None."""
+    sk = str(session_key or "").strip()
+    if sk in ("devcombo_period_range", "devcombo_period_month"):
+        return "devcombo_period_range"
+    if sk in ("reason_period_range", "reason_period_month"):
+        return "reason_period_range"
+    return None
+
+
+def _deviations_period_calendar_bounds(
+    df: pd.DataFrame,
+) -> tuple[Optional[date], Optional[date]]:
+    """Мин/макс дат для календаря «Период» (plan end, иначе snapshot_date)."""
+    if df is None or getattr(df, "empty", True):
+        return None, None
+    if "plan end" in df.columns:
+        pe = _deviations_coerce_datetime(df["plan end"]).dropna()
+        if not pe.empty:
+            return pe.min().date(), pe.max().date()
+    if "snapshot_date" in df.columns:
+        sd = pd.to_datetime(df["snapshot_date"], errors="coerce").dropna()
+        if not sd.empty:
+            return sd.min().date(), sd.max().date()
+    if "plan_month" in df.columns:
+        pm = df["plan_month"].dropna()
+        if not pm.empty:
+            try:
+                periods = pd.PeriodIndex(pm)
+                return periods.min().start_time.date(), periods.max().end_time.date()
+            except Exception:
+                pass
+    return None, None
+
+
+def _deviations_migrate_month_list_to_date_range(
+    st: Any,
+    *,
+    month_key: str,
+    range_key: str,
+    min_value: Optional[date],
+    max_value: Optional[date],
+) -> None:
+    """Старый multiselect месяцев → календарный диапазон (один раз)."""
+    if not hasattr(st, "session_state"):
+        return
+    if range_key in st.session_state:
+        st.session_state.pop(month_key, None)
+        return
+    raw = st.session_state.get(month_key)
+    periods: list = []
+    if isinstance(raw, str):
+        s = raw.strip()
+        if s and s not in ("", "Все месяцы"):
+            p = _deviations_filter_month_string_to_period(s)
+            if p is not None:
+                periods.append(p)
+    elif isinstance(raw, list):
+        for lbl in raw:
+            p = _deviations_filter_month_string_to_period(lbl)
+            if p is not None:
+                periods.append(p)
+    st.session_state.pop(month_key, None)
+    if not periods:
+        return
+    periods = sorted(periods, key=lambda p: int(p.ordinal))
+    try:
+        start = periods[0].start_time.date()
+        end = periods[-1].end_time.date()
+    except Exception:
+        return
+    if min_value is not None and start < min_value:
+        start = min_value
+    if max_value is not None and end > max_value:
+        end = max_value
+    if start > end:
+        start, end = end, start
+    st.session_state[range_key] = (start, end)
+
+
+def _deviations_render_period_calendar(
+    st: Any,
+    df: pd.DataFrame,
+    *,
+    range_key: str = "devcombo_period_range",
+    month_key: Optional[str] = None,
+) -> tuple[Optional[date], Optional[date]]:
+    """Календарь диапазона дат для фильтра «Период» (как на БДДС)."""
+    min_d, max_d = _deviations_period_calendar_bounds(df)
+    if min_d is None or max_d is None:
+        suppress_caption("Нет дат для фильтра периода")
+        return None, None
+    if month_key:
+        _deviations_migrate_month_list_to_date_range(
+            st,
+            month_key=month_key,
+            range_key=range_key,
+            min_value=min_d,
+            max_value=max_d,
+        )
+    return period_date_range_input(
+        st,
+        range_key,
+        min_value=min_d,
+        max_value=max_d,
+        default=(min_d, max_d),
+        help=(
+            "Календарный диапазон по дате окончания плана (можно захватить несколько месяцев). "
+            "Выберите начало и конец периода в календаре."
+        ),
+    )
 
 
 def _deviations_snapshot_month_sort_key(label: str) -> tuple:
@@ -6164,7 +6286,7 @@ def _deviations_snapshot_month_sort_key(label: str) -> tuple:
 def _msp_snapshot_month_labels(
     df: pd.DataFrame, *, descending: bool = False
 ) -> list[str]:
-    """Месяцы выгрузки MSP (snapshot_date) для multiselect «Период»."""
+    """Месяцы выгрузки MSP (snapshot_date) — legacy-список для совместимости."""
     if df is None or getattr(df, "empty", True) or "snapshot_date" not in df.columns:
         return []
     sd = pd.to_datetime(df["snapshot_date"], errors="coerce")
@@ -6252,21 +6374,35 @@ def _deviations_filter_snapshots_by_upload_months(
 def _deviations_apply_snapshot_month_filter(
     df: pd.DataFrame,
     *,
-    session_key: str = "devcombo_period_month",
+    session_key: str = "devcombo_period_range",
     dynamics: bool = False,
 ) -> pd.DataFrame:
     """
-    Срез по месяцу(ам) выгрузки MSP (snapshot_date).
-    Пустой multiselect / «Все месяцы»: последний снимок на проект
-    (dynamics — последний за каждый месяц выгрузки).
-    Один или несколько месяцев: данные файла с max snapshot_date в каждом месяце.
+    Срез «Период»:
+    - «Причины отклонений»: дедуп снимков + календарный диапазон дат;
+    - ПД/РД и прочие: multiselect месяцев выгрузки MSP (snapshot_date).
     """
     if df is None or getattr(df, "empty", True):
         return df
+
+    range_key = _deviations_period_range_key(session_key)
+    if range_key is not None:
+        out = df
+        if "snapshot_date" in df.columns:
+            from web_loader import (
+                _deduplicate_project_snapshots,
+                _deduplicate_project_snapshots_last_per_month,
+            )
+
+            if dynamics:
+                out = _deduplicate_project_snapshots_last_per_month(df)
+            else:
+                out = _deduplicate_project_snapshots(df)
+        return _deviations_filter_df_by_period_range(out, range_key)
+
     selected_periods = _deviations_selected_upload_month_periods(session_key)
     if "snapshot_date" not in df.columns:
-        legacy_key = "devcombo_period_range" if session_key == "devcombo_period_month" else "reason_period_range"
-        return _deviations_filter_df_by_period_range(df, legacy_key)
+        return df
 
     from web_loader import (
         _deduplicate_project_snapshots,
@@ -6303,7 +6439,6 @@ _DEVCOMBO_FILTER_RESET_DEFAULTS = {
     "devcombo_project": "Все",
     "devcombo_block": "Все",
     "devcombo_building": "Все",
-    "devcombo_period_month": [],
     "devcombo_reason": "Все",
     "devcombo_report_period": "Весь период",
     "reason_top5": False,
@@ -6587,24 +6722,12 @@ def _render_deviations_combined_shared_filters(df):
             ) else df
 
             with col4:
-                _month_labels = _deviations_snapshot_month_labels(_df_period_src)
-                if _month_labels:
-                    _deviations_migrate_period_month_multiselect_state(
-                        st, "devcombo_period_month", _month_labels
-                    )
-                    st.multiselect(
-                        "Период",
-                        options=_month_labels,
-                        key="devcombo_period_month",
-                        placeholder="Все месяцы",
-                        help=(
-                            "Месяцы выгрузки MSP на FTP. Пустой выбор — все месяцы; "
-                            "можно отметить несколько — данные из файла с крайней датой "
-                            "в каждом выбранном месяце."
-                        ),
-                    )
-                else:
-                    suppress_caption("Нет snapshot_date для фильтра периода")
+                _deviations_render_period_calendar(
+                    st,
+                    _df_period_src,
+                    range_key="devcombo_period_range",
+                    month_key="devcombo_period_month",
+                )
 
             with col5:
                 if "reason of deviation" in df.columns:
@@ -6791,7 +6914,7 @@ def dashboard_reasons_of_deviation(df, hide_shared_filters=False, building_col=N
 
         with filters_panel(st, reset_keys=[
             "reason_project", "reason_block", "reason_building",
-            "reason_period_month",
+            "reason_period_range", "reason_period_month",
         ]):
             col1, col2, col3, col4 = st.columns(4, gap="small")
 
@@ -6876,7 +6999,7 @@ def dashboard_reasons_of_deviation(df, hide_shared_filters=False, building_col=N
                     _df_bld_r,
                     project_state_key="reason_project",
                     block_state_key="reason_block",
-                    period_session_key="reason_period_month",
+                    period_session_key="reason_period_range",
                     reason_session_key="reason_reason",
                     building_col=building_col,
                 )
@@ -6889,23 +7012,12 @@ def dashboard_reasons_of_deviation(df, hide_shared_filters=False, building_col=N
                 _df_reason_period = _snap_reason if (
                     _snap_reason is not None and not getattr(_snap_reason, "empty", True)
                 ) else df
-                _month_labels_r = _deviations_snapshot_month_labels(_df_reason_period)
-                if _month_labels_r:
-                    _deviations_migrate_period_month_multiselect_state(
-                        st, "reason_period_month", _month_labels_r
-                    )
-                    st.multiselect(
-                        "Период",
-                        options=_month_labels_r,
-                        key="reason_period_month",
-                        placeholder="Все месяцы",
-                        help=(
-                            "Месяцы выгрузки MSP на FTP. Пустой выбор — все месяцы; "
-                            "можно отметить несколько."
-                        ),
-                    )
-                else:
-                    suppress_caption("Нет snapshot_date для фильтра периода")
+                _deviations_render_period_calendar(
+                    st,
+                    _df_reason_period,
+                    range_key="reason_period_range",
+                    month_key="reason_period_month",
+                )
     else:
         pass
 
@@ -6935,7 +7047,7 @@ def dashboard_reasons_of_deviation(df, hide_shared_filters=False, building_col=N
             building_col,
         )
         filtered_df = _deviations_apply_snapshot_month_filter(
-            filtered_df, session_key="reason_period_month", dynamics=False
+            filtered_df, session_key="reason_period_range", dynamics=False
         )
 
     # ТЗ (макет): диаграммы и таблица — один набор строк (ур. 5, причина, отклонение < 0).

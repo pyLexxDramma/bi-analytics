@@ -22,7 +22,7 @@ def suppress_caption(*_args, **_kwargs) -> None:
 
 # --- Единый блок фильтров ---------------------------------------------------------
 
-_SESSION_CSS_FLAG_KEY = "_bi_unified_filters_css_v10"
+_SESSION_CSS_FLAG_KEY = "_bi_unified_filters_css_v11"
 _DEFAULT_FIELD_MIN_PX = 260
 
 UNIFIED_FILTERS_CSS = """
@@ -62,12 +62,16 @@ UNIFIED_FILTERS_CSS = """
 }
 [data-testid="stMain"] [data-testid="stExpander"] [data-testid="stExpanderDetails"] .bi-filters-selectors div[data-testid="stHorizontalBlock"]:has(> div[data-testid="column"]:nth-child(5):last-child) [data-testid="stSelectbox"],
 [data-testid="stMain"] [data-testid="stExpander"] [data-testid="stExpanderDetails"] .bi-filters-selectors div[data-testid="stHorizontalBlock"]:has(> div[data-testid="column"]:nth-child(5):last-child) [data-testid="stMultiSelect"],
+[data-testid="stMain"] [data-testid="stExpander"] [data-testid="stExpanderDetails"] .bi-filters-selectors div[data-testid="stHorizontalBlock"]:has(> div[data-testid="column"]:nth-child(5):last-child) [data-testid="stDateInput"],
 [data-testid="stMainBlockContainer"] [data-testid="stExpander"] [data-testid="stExpanderDetails"] .bi-filters-selectors div[data-testid="stHorizontalBlock"]:has(> div[data-testid="column"]:nth-child(5):last-child) [data-testid="stSelectbox"],
 [data-testid="stMainBlockContainer"] [data-testid="stExpander"] [data-testid="stExpanderDetails"] .bi-filters-selectors div[data-testid="stHorizontalBlock"]:has(> div[data-testid="column"]:nth-child(5):last-child) [data-testid="stMultiSelect"],
+[data-testid="stMainBlockContainer"] [data-testid="stExpander"] [data-testid="stExpanderDetails"] .bi-filters-selectors div[data-testid="stHorizontalBlock"]:has(> div[data-testid="column"]:nth-child(5):last-child) [data-testid="stDateInput"],
 [data-testid="stMain"] [data-testid="stExpander"] [data-testid="stExpanderDetails"] .bi-filters-selectors div[data-testid="stHorizontalBlock"]:has(> div[data-testid="column"]:nth-child(6):last-child) [data-testid="stSelectbox"],
 [data-testid="stMain"] [data-testid="stExpander"] [data-testid="stExpanderDetails"] .bi-filters-selectors div[data-testid="stHorizontalBlock"]:has(> div[data-testid="column"]:nth-child(6):last-child) [data-testid="stMultiSelect"],
+[data-testid="stMain"] [data-testid="stExpander"] [data-testid="stExpanderDetails"] .bi-filters-selectors div[data-testid="stHorizontalBlock"]:has(> div[data-testid="column"]:nth-child(6):last-child) [data-testid="stDateInput"],
 [data-testid="stMainBlockContainer"] [data-testid="stExpander"] [data-testid="stExpanderDetails"] .bi-filters-selectors div[data-testid="stHorizontalBlock"]:has(> div[data-testid="column"]:nth-child(6):last-child) [data-testid="stSelectbox"],
-[data-testid="stMainBlockContainer"] [data-testid="stExpander"] [data-testid="stExpanderDetails"] .bi-filters-selectors div[data-testid="stHorizontalBlock"]:has(> div[data-testid="column"]:nth-child(6):last-child) [data-testid="stMultiSelect"] {
+[data-testid="stMainBlockContainer"] [data-testid="stExpander"] [data-testid="stExpanderDetails"] .bi-filters-selectors div[data-testid="stHorizontalBlock"]:has(> div[data-testid="column"]:nth-child(6):last-child) [data-testid="stMultiSelect"],
+[data-testid="stMainBlockContainer"] [data-testid="stExpander"] [data-testid="stExpanderDetails"] .bi-filters-selectors div[data-testid="stHorizontalBlock"]:has(> div[data-testid="column"]:nth-child(6):last-child) [data-testid="stDateInput"] {
     max-width: none !important;
     width: 100% !important;
 }
