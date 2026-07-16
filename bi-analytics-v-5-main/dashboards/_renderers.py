@@ -33364,21 +33364,37 @@ def _pd_necessary_productivity(
     baseline_finish: pd.Series,
     report_date: date,
     period_multiplier: float,
+    *,
+    schedule_finish: pd.Series | None = None,
 ) -> Optional[float]:
     """
-    |отклонение| / (max БО − дата отчёта) × множитель (×1 / ×7 / ×30).
-    max БО — максимальное базовое окончание среди задач плана (только base end / Baseline Finish).
-    Если срок max БО уже прошёл, нет валидных БО или отклонение 0 — None.
+    |отклонение| / (дней до срока) × множитель (×1 / ×7 / ×30).
+    Срок: max БО (baseline); если уже прошёл — max Finish/прогноз; если и он
+    в прошлом — один период гранулярности (как у РД: бэклог закрыть за период).
+    Отклонение 0 → 0.0 (план выполнен). Нет ни одной валидной даты → None.
     """
+    if not abs(float(deviation_to_date or 0)):
+        return 0.0
+    rem_days: int | None = None
     bf = pd.to_datetime(baseline_finish, errors="coerce", dayfirst=True, format="mixed").dropna()
-    if bf.empty or not abs(float(deviation_to_date or 0)):
-        return None
-    last_bf = bf.max()
-    if pd.isna(last_bf):
-        return None
-    rem_days = (last_bf.date() - report_date).days
-    if rem_days <= 0:
-        return None
+    if not bf.empty:
+        last_bf = bf.max()
+        if pd.notna(last_bf):
+            rem_days = (last_bf.date() - report_date).days
+    if (rem_days is None or rem_days <= 0) and schedule_finish is not None:
+        sf = pd.to_datetime(
+            schedule_finish, errors="coerce", dayfirst=True, format="mixed"
+        ).dropna()
+        if not sf.empty:
+            last_sf = sf.max()
+            if pd.notna(last_sf):
+                rem_days = (last_sf.date() - report_date).days
+    if rem_days is None:
+        # Нет дат вовсе — всё равно показать бэклог за один период гранулярности.
+        rem_days = max(int(period_multiplier) or 1, 1)
+    elif rem_days <= 0:
+        # Срок плана/прогноза уже прошёл, бэклог ещё есть — считать за 1 период.
+        rem_days = max(int(period_multiplier) or 1, 1)
     return (abs(float(deviation_to_date)) / float(rem_days)) * float(period_multiplier)
 
 
@@ -35481,12 +35497,14 @@ def dashboard_documentation(
                             plan_to_date,
                             fact_to_date,
                         )
-                    # П.7: |отклонение| / (дней до max БО по задачам плана) × ×1/×7/×30; max БО — только base end
+                    # П.7: |отклонение| / (дней до срока) × ×1/×7/×30;
+                    # срок — max БО, иначе max Finish, иначе один период гранулярности.
                     nec = _pd_necessary_productivity(
                         float(plan_to_date - fact_to_date),
                         _plan_dates_chart.loc[m_kpi_bp],
                         today,
                         mult_nec,
+                        schedule_finish=_chart_sf.loc[fcst_line_mask.fillna(False)],
                     )
                     period_start = today - timedelta(days=int(win_days) - 1)
                     ts_ps = pd.Timestamp(period_start)
@@ -35520,6 +35538,8 @@ def dashboard_documentation(
                         # до 0 (иначе реальный бэклог скрывается), показываем с десятыми.
                         if nec is None:
                             _nec_disp = "—"
+                        elif abs(float(nec)) < 1e-9:
+                            _nec_disp = "0"
                         elif abs(nec) < 10:
                             _nec_disp = f"{nec:.1f}".replace(".", ",")
                         else:
