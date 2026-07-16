@@ -523,11 +523,17 @@ def _pick_canonical_name(names: pd.Series) -> Optional[str]:
     return _strip_display_name_artifacts(min(top, key=_contractor_name_display_rank))
 
 
+def _gdrs_blank_project_name(val) -> bool:
+    s = str(val or "").strip()
+    return (not s) or s.casefold() in ("nan", "none", "<na>", "nat", "—", "-", "null")
+
+
 def _canonicalize_project_names(df: pd.DataFrame) -> pd.DataFrame:
     """Подменяет UUID-подобные `project_name` на каноническое человекочитаемое имя.
     Канонический выбор — самое популярное не-UUID имя для того же `project_id`,
     или (если ID нет/пуст) — самое популярное по нормализованному имени.
     Также схлопывает варианты типа «Дмитровский1» / «Дмитровский-1».
+    Пустые имена тоже заполняются из `project_id`, если для него известно имя.
     """
     if df is None or df.empty:
         return df
@@ -548,8 +554,8 @@ def _canonicalize_project_names(df: pd.DataFrame) -> pd.DataFrame:
     def _resolve(row) -> str:
         name = str(row["project_name"]).strip()
         pid = str(row["project_id"]).strip()
-        if _is_uuid_like(name):
-            return by_id.get(pid, name)
+        if _gdrs_blank_project_name(name) or _is_uuid_like(name):
+            return by_id.get(pid, "" if _gdrs_blank_project_name(name) else name)
         return by_norm.get(str(row["__name_norm__"]), name)
 
     work["project_name"] = work.apply(_resolve, axis=1)
@@ -561,6 +567,41 @@ def _canonicalize_project_names(df: pd.DataFrame) -> pd.DataFrame:
     except Exception:
         pass
     return work
+
+
+def _gdrs_ensure_project_names(df: pd.DataFrame) -> pd.DataFrame:
+    """Перед сводкой по проектам: заполнить пустые имена из project_id, иначе отбросить строку.
+
+    Иначе `groupby(project_name)` даёт субтотал с пустой ячейкой «Проект» (сиротский план).
+    """
+    if df is None or df.empty or "project_name" not in df.columns:
+        return df
+    work = df.copy()
+    work["project_name"] = work["project_name"].map(
+        lambda v: "" if _gdrs_blank_project_name(v) else str(v).strip()
+    )
+    if "project_id" in work.columns:
+        by_id: dict[str, str] = {}
+        named = work[
+            work["project_name"].ne("")
+            & ~work["project_name"].map(_is_uuid_like)
+            & work["project_id"].astype(str).str.strip().ne("")
+        ]
+        for pid, grp in named.groupby(named["project_id"].astype(str).str.strip()):
+            canon = _pick_canonical_name(grp["project_name"])
+            if canon:
+                by_id[str(pid)] = canon
+        if by_id:
+            empty = work["project_name"].eq("") | work["project_name"].map(_is_uuid_like)
+            filled = (
+                work.loc[empty, "project_id"]
+                .astype(str)
+                .str.strip()
+                .map(by_id)
+                .fillna("")
+            )
+            work.loc[empty, "project_name"] = filled.to_numpy()
+    return work[work["project_name"].ne("")].copy()
 
 
 def _fuzzy_cluster(norms: list[str], cutoff: float = 0.86) -> dict[str, str]:
@@ -2603,6 +2644,42 @@ def merge_plan(dogovor: pd.DataFrame, sprav: pd.DataFrame) -> pd.DataFrame:
         merged["plan_workers"] = merged["plan_workers"].combine_first(merged["plan_workers_s"])
         merged["plan_equipment"] = merged["plan_equipment"].combine_first(merged["plan_equipment_s"])
         merged = merged.drop(columns=["plan_workers_s", "plan_equipment_s"], errors="ignore")
+        # spravochniki даёт только ID+план: outer-join оставляет NaN в именах.
+        # Подтягиваем Наименование_Проекта / контрагента из других строк Dogovor
+        # с тем же project_id / contractor_id (иначе в сводке появляется «пустой» проект).
+        if not d.empty:
+            _pid_name = (
+                d.loc[d["project_name"].astype(str).str.strip().ne(""), ["project_id", "project_name"]]
+                .drop_duplicates("project_id", keep="first")
+                .set_index("project_id")["project_name"]
+            )
+            _cid_name = (
+                d.loc[
+                    d["contractor_name"].astype(str).str.strip().ne(""),
+                    ["contractor_id", "contractor_name"],
+                ]
+                .drop_duplicates("contractor_id", keep="first")
+                .set_index("contractor_id")["contractor_name"]
+            )
+            _pn = merged["project_name"]
+            _pn_blank = _pn.isna() | _pn.astype(str).str.strip().str.casefold().isin(
+                ("", "nan", "none")
+            )
+            if _pn_blank.any() and not _pid_name.empty:
+                merged.loc[_pn_blank, "project_name"] = (
+                    merged.loc[_pn_blank, "project_id"].map(_pid_name)
+                )
+            _cn = merged["contractor_name"]
+            _cn_blank = _cn.isna() | _cn.astype(str).str.strip().str.casefold().isin(
+                ("", "nan", "none")
+            )
+            if _cn_blank.any() and not _cid_name.empty:
+                merged.loc[_cn_blank, "contractor_name"] = (
+                    merged.loc[_cn_blank, "contractor_id"].map(_cid_name)
+                )
+        for _nc in ("project_name", "contractor_name", "contract_name"):
+            if _nc in merged.columns:
+                merged[_nc] = merged[_nc].fillna("")
         return merged
     return d
 
@@ -4456,6 +4533,10 @@ def build_main_table(
         rows = rows[(rows["plan"] > 0) | (rows["skud"] > 0)].copy()
         if rows.empty:
             return pd.DataFrame()
+
+    rows = _gdrs_ensure_project_names(rows)
+    if rows.empty:
+        return pd.DataFrame()
 
     out_blocks: list[pd.DataFrame] = []
     for proj, chunk in rows.groupby("project_name", sort=True):

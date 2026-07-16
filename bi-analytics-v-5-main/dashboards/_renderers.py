@@ -26674,6 +26674,11 @@ if _gdrs_fragment is not None:
 # ==================== DASHBOARD: ГДРС (новая реализация по ТЗ 2026-05-07) ====================
 def _gdrs_projects_summary_display(proj_df: pd.DataFrame) -> pd.DataFrame:
     d = proj_df.sort_values("plan", ascending=False).copy()
+    _pn = d["project_name"].astype(str).str.strip()
+    d = d[
+        _pn.ne("")
+        & ~_pn.str.casefold().isin(("nan", "none", "<na>", "nat", "—", "-", "null"))
+    ].copy()
     out = pd.DataFrame({
         "Проект": d["project_name"].astype(str),
         "План": d["plan"].fillna(0).round(0).astype(int),
@@ -27512,6 +27517,12 @@ def dashboard_gdrs(df, vid_locked: str | None = None, *, theme: str | None = Non
     proj_df = main_t[main_t["row_kind"] == "subtotal"][
         ["project_name", "plan", "skud", "deviation", "delta_pct"]
     ].copy()
+    if not proj_df.empty:
+        _pn_mask = proj_df["project_name"].astype(str).str.strip()
+        proj_df = proj_df[
+            _pn_mask.ne("")
+            & ~_pn_mask.str.casefold().isin(("nan", "none", "<na>", "nat", "—", "-", "null"))
+        ].copy()
     if not proj_df.empty:
         try:
             import plotly.graph_objects as _go
