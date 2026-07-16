@@ -1445,6 +1445,20 @@ html body .st-key-rd_dev_metric_zero [data-testid="metric-container"] [data-test
     -webkit-text-fill-color: #8899aa !important;
 }
 
+/* KPI отклонения ПД (факт − план): ≥0 зелёный, <0 красный */
+html body .st-key-pd_dev_metric_pos [data-testid="stMetricValue"],
+html body .st-key-pd_dev_metric_pos [data-testid="stMetricValue"] *,
+html body .st-key-pd_dev_metric_pos [data-testid="metric-container"] [data-testid="stMetricValue"] {
+    color: #46d68a !important;
+    -webkit-text-fill-color: #46d68a !important;
+}
+html body .st-key-pd_dev_metric_neg [data-testid="stMetricValue"],
+html body .st-key-pd_dev_metric_neg [data-testid="stMetricValue"] *,
+html body .st-key-pd_dev_metric_neg [data-testid="metric-container"] [data-testid="stMetricValue"] {
+    color: #ff5454 !important;
+    -webkit-text-fill-color: #ff5454 !important;
+}
+
 /* Ряд колонок: markdown и подписи внутри колонок (плашки над графиком и т.п.) */
 .main [data-testid="column"] [data-testid="stMarkdownContainer"] p,
 .main [data-testid="column"] [data-testid="stMarkdownContainer"] span,

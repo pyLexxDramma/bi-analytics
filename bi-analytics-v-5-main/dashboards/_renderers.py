@@ -6493,16 +6493,37 @@ def _deviations_snapshot_month_sort_key(label: str) -> tuple:
 def _msp_snapshot_month_labels(
     df: pd.DataFrame, *, descending: bool = False
 ) -> list[str]:
-    """Месяцы выгрузки MSP (snapshot_date) — legacy-список для совместимости."""
+    """Месяцы выгрузки MSP (snapshot_date).
+
+    При descending=True: от текущего месяца к более ранним
+    (июль → июнь → май…), затем будущие месяцы (если есть в данных).
+    """
     if df is None or getattr(df, "empty", True) or "snapshot_date" not in df.columns:
         return []
     sd = pd.to_datetime(df["snapshot_date"], errors="coerce")
     periods = sd.dropna().dt.to_period("M").unique()
-    return sorted(
+    labels = sorted(
         {format_period_ru(p) for p in periods if pd.notna(p)},
         key=_deviations_snapshot_month_sort_key,
         reverse=bool(descending),
     )
+    if not descending or not labels:
+        return labels
+    try:
+        cur = pd.Period(pd.Timestamp.today().normalize(), freq="M")
+    except Exception:
+        return labels
+    past_or_now: list[str] = []
+    future: list[str] = []
+    for lbl in labels:
+        p = _deviations_filter_month_string_to_period(lbl)
+        if p is not None and int(p.ordinal) > int(cur.ordinal):
+            future.append(lbl)
+        else:
+            past_or_now.append(lbl)
+    # past_or_now уже по убыванию; future — по возрастанию (ближайшее будущее первым)
+    future_asc = sorted(future, key=_deviations_snapshot_month_sort_key)
+    return past_or_now + future_asc
 
 
 def _deviations_snapshot_month_labels(df: pd.DataFrame) -> list[str]:
@@ -6518,10 +6539,14 @@ def _deviations_snapshot_month_options(df: pd.DataFrame) -> list[str]:
 def _deviations_migrate_period_month_multiselect_state(
     st: Any, key: str, month_labels: list[str]
 ) -> None:
-    """Пустой список = все месяцы; миграция со старого selectbox (str)."""
-    migrate_gdrs_month_multiselect_state(st, key, month_labels)
+    """Пустой список = все месяцы; миграция со старого selectbox / календаря."""
     try:
         raw = st.session_state.get(key)
+        # После календаря «Причины отклонений» в ключе мог остаться tuple дат —
+        # multiselect падает, график ПД/РД «пропадает».
+        if raw is not None and not isinstance(raw, (list, str)):
+            st.session_state[key] = []
+            raw = []
         if isinstance(raw, str):
             s = raw.strip()
             opts = {str(x).strip() for x in month_labels if str(x).strip()}
@@ -6533,6 +6558,7 @@ def _deviations_migrate_period_month_multiselect_state(
                 st.session_state[key] = []
     except Exception:
         pass
+    migrate_gdrs_month_multiselect_state(st, key, month_labels)
 
 
 def _deviations_selected_upload_month_periods(session_key: str) -> list:
@@ -17343,9 +17369,13 @@ def _render_rd_monthly_overlay_chart(
         st.subheader(subheader)
 
     is_h = orientation == "h"
-    # Горизонтально: Plotly кладёт первую категорию Y ВНИЗУ — сортируем
-    # хронологически (старые → новые), чтобы сверху был последний месяц.
-    plot_df = monthly.sort_values("_month", ascending=True)
+    if is_h:
+        # Горизонтально: первая категория Y ВНИЗУ — сортируем по возрастанию,
+        # чтобы сверху был последний (текущий) месяц: июль → июнь → май.
+        plot_df = monthly.sort_values("_month", ascending=True)
+    else:
+        # Вертикально: слева направо от текущего к ранним.
+        plot_df = monthly.sort_values("_month", ascending=False)
     cat = plot_df["Месяц"].tolist()
 
     fig = go.Figure()
@@ -17430,16 +17460,29 @@ def _render_rd_monthly_overlay_chart(
         _yaxis_kw.update(categoryorder="array", categoryarray=cat)
     elif use_pct:
         _yaxis_kw.update(range=[0, 100], ticksuffix="%")
+    _leg_m = _line_chart_legend_below(n_items=3, long_labels=False)
+    _leg_m["font"] = dict(size=12, color=_fin_chart_legend_text_color())
     fig.update_layout(
         barmode="overlay",
-        legend=standard_chart_legend(),
+        legend=_leg_m,
+        showlegend=True,
         height=max(520, min(900, len(cat) * 36)) if is_h else 520,
+        margin=dict(l=60, r=36, t=48, b=140),
         xaxis=dict(tickfont=dict(color=_ax), title_font=dict(color=_ax)),
         yaxis=_yaxis_kw,
     )
     if use_pct and is_h:
         fig.update_layout(xaxis=dict(range=[0, 100], ticksuffix="%"))
     fig = apply_chart_background(fig)
+    _leg_m = _line_chart_legend_below(n_items=3, long_labels=False)
+    _leg_m["font"] = dict(size=12, color=_fin_chart_legend_text_color())
+    fig.update_layout(
+        legend=_leg_m,
+        showlegend=True,
+        margin=dict(l=60, r=36, t=48, b=150),
+    )
+    if is_h:
+        fig.update_yaxes(categoryorder="array", categoryarray=cat)
     _cap = (
         report_chart_caption_body(caption_parts[0], caption_parts[1])
         if caption_parts
@@ -20611,6 +20654,56 @@ def dashboard_rd_delay(df, is_pd: bool = False):
                 _render_pd_delay_project_indicators(
                     chart_data, y_column, doc_code
                 )
+
+            # Помесячная динамика ПД (раньше была только у РД — «график пропал»).
+            try:
+                _pd_plan_fin_m = _pd_delay_plan_finish_dt_series(
+                    filtered_df,
+                    baseline_col=_bfin,
+                    schedule_col=_sfin or plan_end_col,
+                ).reindex(filtered_df.index)
+                _pd_m_src = filtered_df.copy()
+                _pd_m_src["_plan_end_dt"] = pd.to_datetime(
+                    _pd_plan_fin_m, errors="coerce"
+                )
+                _pd_m_src = _pd_m_src[_pd_m_src["_plan_end_dt"].notna()].copy()
+                if not _pd_m_src.empty:
+                    _pd_m_src["_rd_plan_n"] = pd.to_numeric(
+                        _pd_m_src.get("_pd_row_plan", 1), errors="coerce"
+                    ).fillna(1.0).clip(lower=0.0)
+                    _pd_m_src["_rd_fact_n"] = pd.to_numeric(
+                        _pd_m_src.get("_pd_row_fact", 0), errors="coerce"
+                    ).fillna(0.0).clip(lower=0.0)
+                    # Для агрегата: факт не больше плана по строке.
+                    _pd_m_src["_rd_fact_n"] = np.minimum(
+                        _pd_m_src["_rd_fact_n"], _pd_m_src["_rd_plan_n"]
+                    )
+                    _pd_monthly = _rd_monthly_sections_aggregate(_pd_m_src)
+                    if _pd_monthly is not None and not _pd_monthly.empty:
+                        # От текущего месяца к более ранним (сверху вниз на горизонт. графике).
+                        try:
+                            _cur_m = pd.Period(
+                                pd.Timestamp.today().normalize(), freq="M"
+                            )
+                            _pd_monthly = _pd_monthly[
+                                _pd_monthly["_month"] <= _cur_m
+                            ].copy()
+                        except Exception:
+                            pass
+                        if not _pd_monthly.empty:
+                            _render_rd_monthly_overlay_chart(
+                                _pd_monthly,
+                                metric_mode="Количество разделов",
+                                orientation="h",
+                                subheader=f"Динамика выдачи {doc_code} по месяцам",
+                                chart_key="pd_delay_monthly_overlay",
+                                caption_parts=(
+                                    "Выдача проектной документации",
+                                    "по месяцам",
+                                ),
+                            )
+            except Exception as _pd_m_err:
+                suppress_caption(f"Динамика ПД по месяцам: {_pd_m_err}")
         elif show_by_tasks:
             # Prepare data for chart - each task is a separate bar
             if section_col and section_col in filtered_df.columns:
@@ -31741,35 +31834,32 @@ def _pd_fmt_deviation_days(v) -> str:
 
 
 def _pd_kpi_deviation_text_and_color(plan_v, fact_v) -> tuple[str, str]:
-    """KPI «Отклонение на текущую дату»: факт − план; «+» зелёный, «−» красный."""
+    """KPI «Отклонение на текущую дату»: факт − план; ≥0 зелёный, <0 красный."""
     p = int(round(float(pd.to_numeric(plan_v, errors="coerce") or 0)))
     f = int(round(float(pd.to_numeric(fact_v, errors="coerce") or 0)))
     d = f - p
-    if d > 0:
-        return f"{d:+d}", "#46d68a"
     if d < 0:
         return f"{d:d}", "#ff5454"
-    return "0", "#8899aa"
+    if d > 0:
+        return f"{d:+d}", "#46d68a"
+    return "0", "#46d68a"
 
 
 def _render_pd_deviation_metric(label: str, plan_v, fact_v) -> None:
-    """Метрика отклонения ПД: факт − план; «+» зелёный, «−» красный."""
-    from html import escape as html_esc
+    """Метрика отклонения ПД: факт − план; ≥0 зелёный, <0 красный (−).
 
-    from dashboards.light_theme import finance_chart_label_color
-
-    disp, color = _pd_kpi_deviation_text_and_color(plan_v, fact_v)
-    label_color = finance_chart_label_color(dark="#c8d8ec", light="#64748b")
-    st.markdown(
-        f'<div class="pd-doc-dev-metric">'
-        f'<div class="pd-doc-dev-metric-label" style="color:{label_color}!important;'
-        f'-webkit-text-fill-color:{label_color}!important;">{html_esc(label)}</div>'
-        f'<div class="pd-doc-dev-metric-value" style="color:{color}!important;'
-        f'-webkit-text-fill-color:{color}!important;font-size:1.75rem;font-weight:600;">'
-        f"{html_esc(disp)}</div>"
-        f"</div>",
-        unsafe_allow_html=True,
-    )
+    Нативная st.metric (как у РД) — HTML-markdown раньше пропадал из‑за CSS колонок.
+    """
+    try:
+        p = int(round(float(pd.to_numeric(plan_v, errors="coerce") or 0)))
+        f = int(round(float(pd.to_numeric(fact_v, errors="coerce") or 0)))
+        d = f - p
+    except (TypeError, ValueError):
+        d = 0
+    disp = f"{d:d}" if d < 0 else (f"{d:+d}" if d > 0 else "0")
+    tone = "neg" if d < 0 else "pos"
+    with st.container(key=f"pd_dev_metric_{tone}"):
+        st.metric(label, disp)
 
 
 def _rd_kpi_plan_fact_deviation_today(
@@ -33145,14 +33235,15 @@ def _pd_delay_plan_fact_figure(
                 xanchor="center",
             )
     _n_pf = max(1, len(y_labels))
+    _leg_pf = _line_chart_legend_below(n_items=3, long_labels=True)
     fig.update_layout(
         barmode="overlay",
         xaxis_title="Количество разделов ПД, док.",
         yaxis_title="",
         height=_pd_delay_chart_height_for_labels(_n_pf, ticktext),
         showlegend=True,
-        legend=standard_chart_legend(),
-        margin=dict(l=12, r=48, t=56, b=48),
+        legend=_leg_pf,
+        margin=dict(l=12, r=48, t=56, b=160),
         bargap=0.34,
     )
     fig.update_traces(selector=dict(type="bar"), width=0.48)
@@ -33169,6 +33260,13 @@ def _pd_delay_plan_fact_figure(
     fig.update_xaxes(range=[0, x_max * 1.12], automargin=True)
     fig = apply_chart_background(fig)
     _ax_clr = _fin_chart_axis_color()
+    _leg_pf = _line_chart_legend_below(n_items=3, long_labels=True)
+    _leg_pf["font"] = dict(size=12, color=_fin_chart_legend_text_color())
+    fig.update_layout(
+        legend=_leg_pf,
+        showlegend=True,
+        margin=dict(l=12, r=48, t=56, b=170),
+    )
     fig.update_xaxes(
         tickfont=dict(color=_ax_clr, size=11),
         title_font=dict(color=_ax_clr),
@@ -33542,20 +33640,75 @@ def _pd_axis_date_tick_label_ru(ts: Any) -> str:
 
 
 def _rd_dynamics_chart_month_ticks_ru(dates) -> tuple[list, list]:
-    """Подписи оси X для «Динамика выдачи РД»: «Май 2025» (рус.)."""
+    """Подписи оси X для динамики РД/ПД: «Май 2025» (рус.).
+
+    Тик ставится внутри видимого диапазона дат (не на 1-е число месяца вне данных),
+    иначе подписи месяцев пропадают с оси.
+    """
     all_dates = pd.to_datetime(dates, errors="coerce").dropna()
     if all_dates.empty:
         return [], []
-    p_min = all_dates.min().to_period("M")
-    p_max = all_dates.max().to_period("M")
-    periods = pd.period_range(p_min, p_max, freq="M")
-    tickvals = [p.to_timestamp() for p in periods]
-    ticktext = [format_period_ru(p) for p in periods]
+    d_min = pd.Timestamp(all_dates.min()).normalize()
+    d_max = pd.Timestamp(all_dates.max()).normalize()
+    periods = pd.period_range(d_min.to_period("M"), d_max.to_period("M"), freq="M")
+    tickvals: list = []
+    ticktext: list = []
+    for p in periods:
+        month_start = pd.Timestamp(p.to_timestamp()).normalize()
+        month_end = pd.Timestamp(p.to_timestamp(how="end")).normalize()
+        # Середина пересечения месяца с фактическим диапазоном данных.
+        lo = max(month_start, d_min)
+        hi = min(month_end, d_max)
+        if lo > hi:
+            continue
+        tickvals.append(lo + (hi - lo) / 2)
+        ticktext.append(format_period_ru(p))
     if len(tickvals) > 18:
         step = max(1, (len(tickvals) + 11) // 12)
         tickvals = tickvals[::step]
         ticktext = ticktext[::step]
     return tickvals, ticktext
+
+
+def _line_chart_legend_below(*, n_items: int = 2, long_labels: bool = True) -> dict:
+    """Горизонтальная легенда под графиком без наложения длинных подписей."""
+    entry_w = 260 if long_labels else 140
+    # Длинные подписи: по одной «ячейке» шире + больший gap между пунктами.
+    return standard_chart_legend(
+        title_text="",
+        orientation="h",
+        yanchor="top",
+        y=-0.36,
+        xanchor="center",
+        x=0.5,
+        tracegroupgap=48,
+        itemsizing="constant",
+        itemwidth=48,
+        entrywidthmode="pixels",
+        entrywidth=entry_w,
+        font=dict(size=13),
+        valign="middle",
+    )
+
+
+def _line_chart_legend_above(*, n_items: int = 2, long_labels: bool = True) -> dict:
+    """Легенда над графиком — не пересекается с осью «Период» и тиками месяцев."""
+    entry_w = 260 if long_labels else 140
+    return standard_chart_legend(
+        title_text="",
+        orientation="h",
+        yanchor="bottom",
+        y=1.12,
+        xanchor="left",
+        x=0.0,
+        tracegroupgap=48,
+        itemsizing="constant",
+        itemwidth=48,
+        entrywidthmode="pixels",
+        entrywidth=entry_w,
+        font=dict(size=13),
+        valign="middle",
+    )
 
 
 def _apply_rd_dynamics_line_chart_theme(
@@ -34495,18 +34648,22 @@ def dashboard_documentation(
                         _pie_names = list(pie_data.keys())
                         _pie_vals = list(pie_data.values())
                         _pie_h = 560
-                        _leg_col, _chart_col = st.columns([0.15, 0.85], gap="small")
+                        _leg_col, _chart_col = st.columns([0.26, 0.74], gap="large")
                         _pd_pie_leg_clr = _fin_chart_label_color()
                         with _leg_col:
                             _leg_items = "".join(
-                                f"<div style='display:flex;align-items:center;gap:8px;margin:6px 0;'>"
-                                f"<span style='color:{_pie_color_map.get(lbl, '#2E86AB')};font-size:16px;line-height:1;'>■</span>"
-                                f"<span style='color:{_pd_pie_leg_clr};font-size:13px;'>{lbl}</span></div>"
+                                f"<div style='display:flex;align-items:center;gap:14px;"
+                                f"margin:22px 0;padding:4px 0;line-height:1.5;'>"
+                                f"<span style='color:{_pie_color_map.get(lbl, '#2E86AB')};"
+                                f"font-size:18px;line-height:1.5;flex-shrink:0;'>■</span>"
+                                f"<span style='color:{_pd_pie_leg_clr};font-size:14px;"
+                                f"line-height:1.5;white-space:normal;'>{lbl}</span></div>"
                                 for lbl in _pie_names
                             )
                             st.markdown(
                                 f"<div style='min-height:{_pie_h}px;display:flex;flex-direction:column;"
-                                f"justify-content:center;'>{_leg_items}</div>",
+                                f"justify-content:center;gap:18px;padding:12px 8px 12px 4px;'>"
+                                f"{_leg_items}</div>",
                                 unsafe_allow_html=True,
                             )
                         with _chart_col:
@@ -35389,26 +35546,11 @@ def dashboard_documentation(
                                 "Прогноз по проекту": _PD_FCST_LINE_COLOR,
                             },
                         )
-                        _pd_dates_axis = pd.to_datetime(dynamics_df["Дата"], errors="coerce").dropna().sort_values().unique()
-                        _pd_tickvals = [pd.Timestamp(x) for x in _pd_dates_axis]
-                        if len(_pd_tickvals) > 52:
-                            _pd_ix = np.linspace(0, len(_pd_tickvals) - 1, num=52, dtype=int)
-                            _pd_tickvals = [_pd_tickvals[int(i)] for i in sorted(set(_pd_ix))]
-                        # Прореживаем близкие даты, чтобы повёрнутые подписи не накладывались.
-                        if len(_pd_tickvals) > 2:
-                            _pd_span_days = max((_pd_tickvals[-1] - _pd_tickvals[0]).days, 1)
-                            _pd_min_gap = max(_pd_span_days / 24.0, 7.0)
-                            _pd_kept = [_pd_tickvals[0]]
-                            for _tv in _pd_tickvals[1:-1]:
-                                if (_tv - _pd_kept[-1]).days >= _pd_min_gap:
-                                    _pd_kept.append(_tv)
-                            _pd_last = _pd_tickvals[-1]
-                            if (_pd_last - _pd_kept[-1]).days < _pd_min_gap and len(_pd_kept) > 1:
-                                _pd_kept[-1] = _pd_last
-                            else:
-                                _pd_kept.append(_pd_last)
-                            _pd_tickvals = _pd_kept
-                        _pd_ticktext = [_pd_axis_date_tick_label_ru(v) for v in _pd_tickvals]
+                        # Подписи оси X — месяцы (как у РД), иначе тики «день» пропадали
+                        # после apply_chart_background / сжатия легенды.
+                        _pd_tickvals, _pd_ticktext = _rd_dynamics_chart_month_ticks_ru(
+                            dynamics_df["Дата"]
+                        )
                         _pd_y = pd.to_numeric(dynamics_df["Количество"], errors="coerce").dropna()
                         _pd_y_max = float(_pd_y.max()) if not _pd_y.empty else 1.0
                         _pd_y_min = float(_pd_y.min()) if not _pd_y.empty else 0.0
@@ -35420,32 +35562,34 @@ def dashboard_documentation(
                             if _pd_y_min >= 0
                             else _pd_y_min - max(_pd_foot, abs(_pd_y_min) * 0.15)
                         )
+                        _pd_ax = _fin_chart_axis_color()
+                        _pd_leg = _line_chart_legend_above(n_items=2, long_labels=True)
                         fig_dynamics.update_layout(
-                            margin=dict(l=56, r=36, t=48, b=138),
+                            margin=dict(l=56, r=36, t=88, b=120),
                             yaxis_title="Количество разделов ПД",
                             hovermode="x unified",
-                            height=550,
+                            height=600,
                             showlegend=True,
                             xaxis=dict(
                                 title=dict(
                                     text="Период",
-                                    standoff=56,
-                                    font=dict(color=_fin_chart_axis_color()),
+                                    standoff=22,
+                                    font=dict(color=_pd_ax),
                                 ),
                                 tickmode="array",
                                 tickvals=_pd_tickvals,
                                 ticktext=_pd_ticktext,
-                                tickangle=-45,
-                                tickfont=dict(size=10, color=_fin_chart_axis_color()),
-                                automargin=False,
+                                tickangle=-35,
+                                tickfont=dict(size=12, color=_pd_ax),
+                                automargin=True,
                             ),
                             yaxis=dict(
                                 range=[_pd_y_lo, _pd_y_max + _pd_head],
                                 autorange=False,
-                                tickfont=dict(size=10, color=_fin_chart_axis_color()),
-                                title_font=dict(color=_fin_chart_axis_color()),
+                                tickfont=dict(size=10, color=_pd_ax),
+                                title_font=dict(color=_pd_ax),
                             ),
-                            legend=standard_chart_legend(title_text=""),
+                            legend=_pd_leg,
                         )
                         fig_dynamics.update_traces(
                             mode="lines+markers+text",
@@ -35470,9 +35614,36 @@ def dashboard_documentation(
                                 _tr.marker.size = 9
                                 _tr.textfont = dict(color=_PD_FCST_LINE_COLOR, size=10)
                         fig_dynamics = apply_chart_background(fig_dynamics)
-                        fig_dynamics.update_yaxes(
-                            range=[_pd_y_lo, _pd_y_max + _pd_head],
-                            autorange=False,
+                        # apply_chart_background сбрасывает tickmode/легенду — возвращаем.
+                        _pd_ax = _fin_chart_axis_color()
+                        _pd_leg = _line_chart_legend_above(n_items=2, long_labels=True)
+                        _pd_leg["font"] = dict(
+                            size=13, color=_fin_chart_legend_text_color()
+                        )
+                        fig_dynamics.update_layout(
+                            margin=dict(l=56, r=36, t=92, b=130),
+                            xaxis=dict(
+                                title=dict(
+                                    text="Период",
+                                    standoff=22,
+                                    font=dict(color=_pd_ax),
+                                ),
+                                tickmode="array",
+                                tickvals=_pd_tickvals,
+                                ticktext=_pd_ticktext,
+                                tickangle=-35,
+                                tickfont=dict(size=12, color=_pd_ax),
+                                automargin=True,
+                            ),
+                            yaxis=dict(
+                                range=[_pd_y_lo, _pd_y_max + _pd_head],
+                                autorange=False,
+                                tickfont=dict(size=10, color=_pd_ax),
+                                title_font=dict(color=_pd_ax),
+                            ),
+                            legend=_pd_leg,
+                            showlegend=True,
+                            hovermode="x unified",
                         )
                         render_chart(fig_dynamics, caption_below=report_chart_caption_body("Динамика выдачи ПД"))
 
