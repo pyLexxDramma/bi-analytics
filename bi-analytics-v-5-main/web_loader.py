@@ -587,6 +587,7 @@ def _load_rd_plan_file(filepath: Path) -> Optional[pd.DataFrame]:
                     df = df.dropna(how="all").reset_index(drop=True)
                     if df.empty:
                         continue
+                    df = _rd_plan_unglue_name_columns(df)
                     df.attrs["data_type"] = "rd_plan"
                     df.attrs["rd_plan_header_note"] = (
                         f"FALLBACK header_row={header_row}, enc={enc}, sep=';', "
@@ -597,9 +598,47 @@ def _load_rd_plan_file(filepath: Path) -> Optional[pd.DataFrame]:
     best_df = best_df.dropna(how="all").reset_index(drop=True)
     if best_df.empty:
         return None
+    best_df = _rd_plan_unglue_name_columns(best_df)
     best_df.attrs["data_type"] = "rd_plan"
     best_df.attrs["rd_plan_header_note"] = best_note
     return best_df
+
+
+# other_*_rd/pd.csv иногда склеивают уровни иерархии без пробела
+# («…железобетонныеПлиты…», «…+4.500Покрытие…»).
+_RD_PLAN_GLUED_NAME_RE = re.compile(
+    r"(?<=[а-яёa-z])(?=[А-ЯЁA-Z])|(?<=[0-9])(?=[А-ЯЁA-Z])"
+)
+
+
+def _rd_plan_unglue_name_columns(df: pd.DataFrame) -> pd.DataFrame:
+    """Нормализует колонки «Наименование…» плана РД/ПД: вставляет пробелы в слитных именах."""
+    if df is None or getattr(df, "empty", True):
+        return df
+    out = df
+    for col in list(out.columns):
+        cl = str(col).replace("\n", " ").replace("\r", " ").strip().casefold()
+        if "наименован" not in cl:
+            continue
+        ser = out[col].map(
+            lambda v: (
+                ""
+                if v is None or (isinstance(v, float) and pd.isna(v))
+                else str(v).strip()
+            )
+        )
+        fixed = ser.map(
+            lambda s: (
+                re.sub(r"\s+", " ", _RD_PLAN_GLUED_NAME_RE.sub(" ", s)).strip()
+                if s and _RD_PLAN_GLUED_NAME_RE.search(s)
+                else s
+            )
+        )
+        if not fixed.equals(ser):
+            if out is df:
+                out = df.copy()
+            out[col] = fixed
+    return out
 
 
 def _load_resources_file(filepath: Path) -> Optional[pd.DataFrame]:

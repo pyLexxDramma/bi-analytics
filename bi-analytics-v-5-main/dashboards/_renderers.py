@@ -17161,6 +17161,8 @@ def _rd_plan_csv_sections_df(
         )
     else:
         df["_fact_dt"] = pd.NaT
+    if pc.get("name") and pc["name"] in df.columns:
+        df[pc["name"]] = df[pc["name"]].map(_rd_plan_unglue_section_name)
     return _rd_plan_dedupe_sections_df(df, pc)
 
 
@@ -17266,6 +17268,21 @@ def _rd_csv_cell_str(val: Any) -> str:
     if s.lower() in ("nan", "none", "<na>", "nat"):
         return ""
     return s
+
+
+# other_*_rd.csv / other_*_pd.csv иногда склеивают уровни иерархии без разделителя:
+# «Конструкции железобетонныеПлиты перекрытий», «…+4.500Покрытие…».
+_RD_PLAN_GLUED_NAME_RE = re.compile(
+    r"(?<=[а-яёa-z])(?=[А-ЯЁA-Z])|(?<=[0-9])(?=[А-ЯЁA-Z])"
+)
+
+
+def _rd_plan_unglue_section_name(val: Any) -> str:
+    """Вставляет пробел на границе слитного «camelCase» в наименовании раздела."""
+    s = _rd_csv_cell_str(val)
+    if not s or not _RD_PLAN_GLUED_NAME_RE.search(s):
+        return s
+    return re.sub(r"\s+", " ", _RD_PLAN_GLUED_NAME_RE.sub(" ", s)).strip()
 
 
 def _rd_plan_row_is_not_issued_csv_status(raw: Any) -> bool:
@@ -17818,6 +17835,10 @@ def _rd_detail_prepare_for_display(
                 for c in ("Прогнозная дата выдачи разделов", "Отклонение от прогнозной даты, дн")
                 if c in out.columns
             ]
+        )
+    if "Наименование разделов работ" in out.columns:
+        out["Наименование разделов работ"] = out["Наименование разделов работ"].map(
+            _rd_plan_unglue_section_name
         )
     out = out.rename(columns=_RD_DETAIL_DISPLAY_RENAME)
     _cols = [c for c in _RD_DETAIL_DISPLAY_ORDER if c in out.columns]
@@ -18890,6 +18911,8 @@ def _rd_plan_fallback_view(
     df = _rd_plan_keep_latest_snapshot(df, proj_col)
     if df.empty:
         return False
+    if name_col and name_col in df.columns:
+        df[name_col] = df[name_col].map(_rd_plan_unglue_section_name)
 
     fb_k_shared = f"{source_key}_{doc_code}"
 
