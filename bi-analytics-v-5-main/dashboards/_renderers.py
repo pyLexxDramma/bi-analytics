@@ -537,7 +537,12 @@ def _gantt_table_css_for_theme() -> str:
     return css
 
 
-def _pd_dynamics_table_shell_css_for_theme() -> str:
+def _pd_dynamics_table_box_height(n_rows: int) -> int:
+    """Высота iframe/скролл-бокса ПД: по числу строк, кап 640 (без пустоты у коротких таблиц)."""
+    return int(min(640, max(120, 48 + max(0, int(n_rows)) * 32 + 16)))
+
+
+def _pd_dynamics_table_shell_css_for_theme(*, n_rows: int = 0) -> str:
     try:
         from dashboards.light_theme import is_light_preview_active
 
@@ -546,8 +551,7 @@ def _pd_dynamics_table_shell_css_for_theme() -> str:
         _light = False
     _border = "1px solid #cbd5e1" if _light else "1px solid rgba(255,255,255,0.25)"
     _scroll = "scrollbar-color:#94a3b8 #e5e7eb!important;" if _light else ""
-    _pd_vh = 52.0
-    _pd_box_h = int(min(640, max(280, _pd_vh * 10 + 56)))
+    _pd_box_h = _pd_dynamics_table_box_height(n_rows) if n_rows > 0 else 640
     return (
         "<style>"
         "div[class*='st-key-bitblwrap_pd_dyn_tbl'],"
@@ -964,16 +968,13 @@ def _render_plan_fact_dates_main_table(
     _pd_wrap_id = ""
     _pd_box_h = 0
     if _is_pd_dyn:
-        _pd_vh = 52.0
-        _pd_box_h = int(min(640, max(280, _pd_vh * 10 + 56)))
+        _pd_box_h = _pd_dynamics_table_box_height(len(display_df))
         _pd_wrap_id = f"pd_dyn_{abs(id(display_df))}"
         _wrap_cls = (
             "budget-deviation-table-wrap pd-dynamics-table-wrap "
             "rendered-table-wrap pf-dates-table-wrap"
         )
-        _scroll_attr = (
-            f' data-scroll-vh="{_pd_vh:.1f}" data-scroll-box-h="{_pd_box_h}"'
-        )
+        _scroll_attr = f' data-scroll-box-h="{_pd_box_h}"'
     elif _wrap_extra:
         _wrap_cls = f"{_wrap_cls} {_wrap_extra}"
     elif file_stem == "plan_fact_dates":
@@ -35721,7 +35722,10 @@ def dashboard_documentation(
                         tbl_numeric["Базовое окончание"] = tbl_f["_bf"].values
                         tbl_numeric["Окончание"] = tbl_f["_sf"].values
                         tbl_numeric["Отклонение окончания"] = _dev_round.values
-                        st.markdown(_pd_dynamics_table_shell_css_for_theme(), unsafe_allow_html=True)
+                        st.markdown(
+                            _pd_dynamics_table_shell_css_for_theme(n_rows=len(tbl_show)),
+                            unsafe_allow_html=True,
+                        )
                         _export_tbl = tbl_show.copy()
                         _render_plan_fact_dates_main_table(
                             tbl_show,

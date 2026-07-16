@@ -394,8 +394,12 @@ _TABLE_SORT_JS = r"""
                                : Math.ceil(pdScrollBox.scrollHeight || 0);
         var pdAttr = pdScrollBox.getAttribute("data-scroll-box-h")
           || pdScrollBox.getAttribute("data-pd-box-h");
-        var pdBoxH = pdAttr ? parseInt(pdAttr, 10) : 520;
-        if (!pdBoxH || pdBoxH < 120) pdBoxH = 520;
+        var pdCap = pdAttr ? parseInt(pdAttr, 10) : 640;
+        if (!pdCap || pdCap < 120) pdCap = 640;
+        var pdBoxH = Math.min(pdCap, Math.max(120, pdContent + 16));
+        pdScrollBox.style.setProperty("height", pdBoxH + "px", "important");
+        pdScrollBox.style.setProperty("max-height", pdBoxH + "px", "important");
+        pdScrollBox.style.setProperty("min-height", "0", "important");
         window.parent.postMessage({ type: "streamlit:setFrameHeight", height: pdBoxH }, "*");
         return;
       }
@@ -710,8 +714,6 @@ _COMPACT_FRAME_FIT_JS = r"""
           }
         } catch (e) {}
         pdScroll.style.setProperty("width", "100%", "important");
-        pdScroll.style.setProperty("min-height", "520px", "important");
-        pdScroll.style.setProperty("height", "100%", "important");
         pdScroll.style.setProperty("box-sizing", "border-box", "important");
         var pdTbl = pdScroll.querySelector("table");
         if (pdTbl) {
@@ -722,14 +724,18 @@ _COMPACT_FRAME_FIT_JS = r"""
         var pdRoot = document.querySelector(".bi-sortable-html-root");
         if (pdRoot) {
           pdRoot.style.setProperty("width", "100%", "important");
-          pdRoot.style.setProperty("height", "100%", "important");
+          pdRoot.style.setProperty("max-width", "100%", "important");
         }
-        var pdContent = pdTbl ? Math.ceil(pdTbl.getBoundingClientRect().height)
-                              : Math.ceil(pdScroll.scrollHeight || 0);
+        var pdContent2 = pdTbl ? Math.ceil(pdTbl.getBoundingClientRect().height)
+                               : Math.ceil(pdScroll.scrollHeight || 0);
         var pdAttr2 = pdScroll.getAttribute("data-scroll-box-h")
           || pdScroll.getAttribute("data-pd-box-h");
-        var pdBoxH2 = pdAttr2 ? parseInt(pdAttr2, 10) : 520;
-        if (!pdBoxH2 || pdBoxH2 < 120) pdBoxH2 = 520;
+        var pdCap2 = pdAttr2 ? parseInt(pdAttr2, 10) : 640;
+        if (!pdCap2 || pdCap2 < 120) pdCap2 = 640;
+        var pdBoxH2 = Math.min(pdCap2, Math.max(120, pdContent2 + 16));
+        pdScroll.style.setProperty("height", pdBoxH2 + "px", "important");
+        pdScroll.style.setProperty("max-height", pdBoxH2 + "px", "important");
+        pdScroll.style.setProperty("min-height", "0", "important");
         window.parent.postMessage({ type: "streamlit:setFrameHeight", height: pdBoxH2 }, "*");
         return;
       }
@@ -1020,7 +1026,9 @@ html:has(.fc-table-scroll-wrap),body:has(.fc-table-scroll-wrap){
   -webkit-overflow-scrolling:touch;
   scrollbar-gutter:stable;scrollbar-width:thin;box-sizing:border-box;
 }
-.pd-dynamics-scroll-wrap{display:block!important;width:100%!important;max-width:100%!important;min-height:520px!important;height:100%!important;max-height:100%!important;overflow-y:auto!important;overflow-x:auto!important;-webkit-overflow-scrolling:touch!important;scrollbar-gutter:stable!important;scrollbar-width:thin!important;scrollbar-color:#4a5568 #1a1c23!important;border:1px solid rgba(255,255,255,0.25)!important;border-radius:10px!important;margin:0.35em 0 0 0!important;box-sizing:border-box!important;}
+.pd-dynamics-scroll-wrap{display:block!important;width:100%!important;max-width:100%!important;min-height:0!important;height:auto!important;max-height:640px!important;overflow-y:auto!important;overflow-x:auto!important;-webkit-overflow-scrolling:touch!important;scrollbar-gutter:stable!important;scrollbar-width:thin!important;scrollbar-color:#4a5568 #1a1c23!important;border:1px solid rgba(255,255,255,0.25)!important;border-radius:10px!important;margin:0.35em 0 0 0!important;box-sizing:border-box!important;}
+.pd-dynamics-scroll-wrap[data-scroll-box-h],
+.pd-dynamics-scroll-wrap[data-pd-box-h]{min-height:0!important;height:auto!important;max-height:640px!important;}
 .pd-dynamics-scroll-wrap thead th{position:sticky!important;top:0!important;z-index:5!important;vertical-align:middle!important;background:hsl(209,72%,6%)!important;overflow:visible!important;text-overflow:clip!important;white-space:nowrap!important;}
 .pd-dynamics-scroll-wrap thead th .bi-sort-label{white-space:nowrap!important;overflow:visible!important;flex:0 0 auto!important;display:inline-block!important;}
 .pd-dynamics-scroll-wrap .pf-dates-table,
@@ -1655,16 +1663,16 @@ _PD_DYNAMICS_IFRAME_SHELL_CSS_LIGHT = """
 <style>
 html:has(.pd-dynamics-scroll-wrap),body:has(.pd-dynamics-scroll-wrap),
 html:has(.pd-dynamics-table-wrap),body:has(.pd-dynamics-table-wrap){
-  overflow:hidden!important;margin:0;padding:0;height:100%!important;min-height:0!important;
+  overflow:hidden!important;margin:0;padding:0;height:auto!important;min-height:0!important;
   background:#ffffff!important;color:#111827!important;
 }
 .bi-sortable-html-root:has(.pd-dynamics-scroll-wrap),
 .bi-sortable-html-root:has(.pd-dynamics-table-wrap){
-  overflow:hidden!important;height:100%!important;max-height:100%!important;min-height:0!important;
+  overflow:hidden!important;height:auto!important;max-height:none!important;min-height:0!important;
 }
 .pd-dynamics-scroll-wrap{
-  display:block!important;width:100%!important;max-width:100%!important;min-height:520px!important;
-  height:100%!important;max-height:100%!important;
+  display:block!important;width:100%!important;max-width:100%!important;min-height:0!important;
+  height:auto!important;max-height:640px!important;
   overflow-x:auto!important;overflow-y:auto!important;-webkit-overflow-scrolling:touch!important;
   scrollbar-gutter:stable;scrollbar-width:thin;scrollbar-color:#94a3b8 #e5e7eb!important;
   border:1px solid #cbd5e1!important;border-radius:10px!important;
@@ -1672,7 +1680,7 @@ html:has(.pd-dynamics-table-wrap),body:has(.pd-dynamics-table-wrap){
 }
 .pd-dynamics-scroll-wrap[data-scroll-box-h],
 .pd-dynamics-scroll-wrap[data-pd-box-h]{
-  height:100%!important;max-height:100%!important;min-height:0!important;
+  height:auto!important;max-height:640px!important;min-height:0!important;
   overflow-y:auto!important;overflow-x:auto!important;
 }
 .pd-dynamics-scroll-wrap thead th,
@@ -1814,14 +1822,15 @@ def _estimate_html_block_height(html: str) -> int:
         extra = 12
         cap = 640
     elif "pd-dynamics-scroll-wrap" in html_l:
-        thead_h = 42
-        row_h = 27
-        extra = 48
-        cap = 720
+        thead_h = 48
+        row_h = 32
+        extra = 16
+        cap = 640
     elif "pd-dynamics-table-wrap" in html_l:
-        thead_h = 42
-        row_h = 27
-        extra = 4
+        thead_h = 48
+        row_h = 32
+        extra = 16
+        cap = 640
     elif "pf-covenant-table-wrap" in html_l:
         thead_h = 42
         row_h = 27
@@ -2175,7 +2184,7 @@ def render_sortable_html_block(html: str, *, compact_iframe: bool | None = None)
         _m_pd = re.search(r'data-pd-box-h="(\d+)"', html or "")
         if not _m_pd:
             _m_pd = re.search(r'data-scroll-box-h="(\d+)"', html or "")
-        _h_pd = int(_m_pd.group(1)) if _m_pd else min(720, max(520, _estimate_html_block_height(html)))
+        _h_pd = int(_m_pd.group(1)) if _m_pd else min(640, max(120, _estimate_html_block_height(html)))
         _light_pd = "bi-light-table" in (html or "") or "gdrs-light-table" in (html or "")
         _th_bg = (
             "background:#f3f4f6!important;color:#111827!important;"
@@ -2183,10 +2192,10 @@ def render_sortable_html_block(html: str, *, compact_iframe: bool | None = None)
             else "background:hsl(209,72%,6%)!important;"
         )
         _pd_head_css = (
-            "<style>html,body{height:100%!important;min-height:0!important;overflow:hidden!important;margin:0;padding:0;"
+            "<style>html,body{height:auto!important;min-height:0!important;overflow:hidden!important;margin:0;padding:0;"
             + ("background:#ffffff!important;color:#111827!important;" if _light_pd else "")
-            + ".bi-sortable-html-root{height:100%!important;min-height:0!important;overflow:hidden!important;}"
-            + "html body .pd-dynamics-scroll-wrap{height:100%!important;max-height:100%!important;min-height:100%!important;"
+            + ".bi-sortable-html-root{height:auto!important;min-height:0!important;overflow:hidden!important;}"
+            + f"html body .pd-dynamics-scroll-wrap{{height:{_h_pd}px!important;max-height:{_h_pd}px!important;min-height:0!important;"
             + "width:100%!important;max-width:100%!important;"
             + "overflow-x:auto!important;overflow-y:auto!important;-webkit-overflow-scrolling:touch!important;"
             + "scrollbar-gutter:stable!important;box-sizing:border-box!important;}"
