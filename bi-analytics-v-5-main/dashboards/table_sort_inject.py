@@ -1029,8 +1029,8 @@ html:has(.fc-table-scroll-wrap),body:has(.fc-table-scroll-wrap){
 .pd-dynamics-scroll-wrap{display:block!important;width:100%!important;max-width:100%!important;min-height:0!important;height:auto!important;max-height:640px!important;overflow-y:auto!important;overflow-x:auto!important;-webkit-overflow-scrolling:touch!important;scrollbar-gutter:stable!important;scrollbar-width:thin!important;scrollbar-color:#4a5568 #1a1c23!important;border:1px solid rgba(255,255,255,0.25)!important;border-radius:10px!important;margin:0.35em 0 0 0!important;box-sizing:border-box!important;}
 .pd-dynamics-scroll-wrap[data-scroll-box-h],
 .pd-dynamics-scroll-wrap[data-pd-box-h]{min-height:0!important;height:auto!important;max-height:640px!important;}
-.pd-dynamics-scroll-wrap thead th{position:sticky!important;top:0!important;z-index:5!important;vertical-align:middle!important;background:hsl(209,72%,6%)!important;overflow:visible!important;text-overflow:clip!important;white-space:nowrap!important;}
-.pd-dynamics-scroll-wrap thead th .bi-sort-label{white-space:nowrap!important;overflow:visible!important;flex:0 0 auto!important;display:inline-block!important;}
+.pd-dynamics-scroll-wrap thead th,.pd-dynamics-table-wrap thead th{position:sticky!important;top:0!important;z-index:5!important;vertical-align:middle!important;text-align:center!important;background:hsl(209,72%,6%)!important;overflow:visible!important;text-overflow:clip!important;white-space:nowrap!important;}
+.pd-dynamics-scroll-wrap thead th .bi-sort-label,.pd-dynamics-table-wrap thead th .bi-sort-label{white-space:nowrap!important;overflow:visible!important;flex:0 0 auto!important;display:inline-block!important;text-align:center!important;width:100%!important;}
 .pd-dynamics-scroll-wrap .pf-dates-table,
 .pd-dynamics-table-wrap .pf-dates-table,
 .bi-sortable-html-root:has(.pd-dynamics-scroll-wrap) table.pf-dates-table,
@@ -1165,6 +1165,14 @@ html,body{
 .bi-sortable-html-root:has(.pd-dynamics-table-wrap) table th,
 .bi-sortable-html-root:has(.pd-dynamics-table-wrap) table td{
   white-space:normal!important;word-wrap:break-word!important;overflow-wrap:anywhere!important;
+}
+.bi-sortable-html-root:has(.pd-dynamics-scroll-wrap) table th,
+.bi-sortable-html-root:has(.pd-dynamics-table-wrap) table th{
+  text-align:center!important;vertical-align:middle!important;
+}
+.bi-sortable-html-root:has(.pd-dynamics-scroll-wrap) table th .bi-sort-label,
+.bi-sortable-html-root:has(.pd-dynamics-table-wrap) table th .bi-sort-label{
+  text-align:center!important;width:100%!important;display:inline-block!important;
 }
 
 @media (max-width:900px){
@@ -1688,11 +1696,13 @@ html:has(.pd-dynamics-table-wrap),body:has(.pd-dynamics-table-wrap){
   position:sticky!important;top:0!important;z-index:5!important;
   background-color:#f3f4f6!important;color:#111827!important;
   overflow:visible!important;text-overflow:clip!important;white-space:nowrap!important;
+  text-align:center!important;vertical-align:middle!important;
 }
 .pd-dynamics-scroll-wrap thead th .bi-sort-label,
 .pd-dynamics-table-wrap thead th .bi-sort-label{
   white-space:nowrap!important;overflow:visible!important;text-overflow:clip!important;
   flex:0 0 auto!important;display:inline-block!important;color:#111827!important;
+  text-align:center!important;width:100%!important;
 }
 .pd-dynamics-scroll-wrap tbody td:not(.pf-dev-red):not(.pf-dev-green),
 .pd-dynamics-table-wrap tbody td:not(.pf-dev-red):not(.pf-dev-green){
@@ -2202,7 +2212,8 @@ def render_sortable_html_block(html: str, *, compact_iframe: bool | None = None)
             + "html body .pd-dynamics-scroll-wrap .pf-dates-table,"
             + "html body .pd-dynamics-table-wrap .pf-dates-table{"
             + "width:100%!important;min-width:100%!important;max-width:100%!important;table-layout:fixed!important;}"
-            + f"html body .pd-dynamics-scroll-wrap thead th{{position:sticky!important;top:0!important;z-index:5!important;{_th_bg}}}"
+            + f"html body .pd-dynamics-scroll-wrap thead th{{position:sticky!important;top:0!important;z-index:5!important;text-align:center!important;vertical-align:middle!important;{_th_bg}}}"
+            + "html body .pd-dynamics-scroll-wrap thead th .bi-sort-label{text-align:center!important;width:100%!important;display:inline-block!important;}"
             + "</style></head>"
         )
         doc_sc = doc.replace("</head>", _pd_head_css, 1)

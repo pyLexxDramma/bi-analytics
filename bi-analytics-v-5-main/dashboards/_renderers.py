@@ -258,11 +258,13 @@ _TABLE_CSS = """
 .pd-dynamics-scroll-wrap .pf-dates-table thead th,
 .pd-dynamics-table-wrap .pf-dates-table thead th{
   overflow:visible!important;text-overflow:clip!important;white-space:nowrap!important;
+  text-align:center!important;vertical-align:middle!important;
 }
 .pd-dynamics-scroll-wrap .pf-dates-table thead th .bi-sort-label,
 .pd-dynamics-table-wrap .pf-dates-table thead th .bi-sort-label{
   white-space:nowrap!important;overflow:visible!important;text-overflow:clip!important;
   flex:0 0 auto!important;display:inline-block!important;
+  text-align:center!important;width:100%!important;
 }
 .pf-dates-scroll-wrap{
   overflow-x:auto!important;overflow-y:auto!important;
