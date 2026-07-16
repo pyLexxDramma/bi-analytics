@@ -40330,23 +40330,18 @@ def dashboard_forecast_budget(df):
         _px_fc = 880
         _tfs_out_fc = 9 if _nfc > 20 else 10
         _fc_bar_scale = 1.0
-        _fc_bar_slots = 2 + (0 if _hide_dev_fc else 1)
+        # Всегда: план + факт + прогноз; отклонение — опционально.
+        _fc_bar_slots = 3 + (0 if _hide_dev_fc else 1)
         _fmt_hover1 = lambda v: format_million_rub(v, decimals=1)  # noqa: E731
         _bar_lbl_fc = _fin_chart_label_color()
         _dev_mln_fc = _chart_df["_dev"].div(1e6)
         _dev_thr_fc = 0.005
 
-        # По ТЗ (скрин 3): всегда прогноз + выбранная база
-        # (БДДС план → синий, БДДС факт → фиолетовый) + столбец отклонения.
+        # БДДС план и БДДС факт — всегда на графике и в легенде.
+        # Селектор «Отклонение … считать к» влияет только на расчёт столбца отклонения.
         if _dev_base_fc == "БДДС факт":
-            _base_col_fc = "bdds_fact"
-            _base_name_fc = "БДДС факт"
-            _base_color_fc = "#A23B72"
             _dev_label_fc = "Отклонение (факт − прогноз), млн. руб."
         else:
-            _base_col_fc = "bdds_plan_msp"
-            _base_name_fc = "БДДС план"
-            _base_color_fc = "#2E86AB"
             _dev_label_fc = "Отклонение (план − прогноз), млн. руб."
 
         # Порог скрытия мелких/нулевых подписей, чтобы они не накладывались.
@@ -40354,7 +40349,8 @@ def dashboard_forecast_budget(df):
             np.nanmax(
                 np.concatenate(
                     [
-                        _chart_df[_base_col_fc].abs().to_numpy(),
+                        _chart_df["bdds_plan_msp"].abs().to_numpy(),
+                        _chart_df["bdds_fact"].abs().to_numpy(),
                         _chart_df["bdds_forecast"].abs().to_numpy(),
                     ]
                 )
@@ -40362,8 +40358,11 @@ def dashboard_forecast_budget(df):
             or 0.0
         )
         _lbl_floor_mln = max(_lbl_max_fc / 1e6 * 0.02, 0.05)
-        _base_txt_fc = _finance_bar_text_mln_rub(
-            _chart_df[_base_col_fc], min_abs_mln=_lbl_floor_mln, decimals=1, unit_suffix=" млн. руб."
+        _plan_txt_fc = _finance_bar_text_mln_rub(
+            _chart_df["bdds_plan_msp"], min_abs_mln=_lbl_floor_mln, decimals=1, unit_suffix=" млн. руб."
+        )
+        _fact_txt_fc = _finance_bar_text_mln_rub(
+            _chart_df["bdds_fact"], min_abs_mln=_lbl_floor_mln, decimals=1, unit_suffix=" млн. руб."
         )
         _frc_txt_fc = _finance_bar_text_mln_rub(
             _chart_df["bdds_forecast"], min_abs_mln=_lbl_floor_mln, decimals=1, unit_suffix=" млн. руб."
@@ -40374,16 +40373,31 @@ def dashboard_forecast_budget(df):
         fig_fc.add_trace(
             go.Bar(
                 x=x_fc,
-                y=_chart_df[_base_col_fc].div(1e6),
-                name=_base_name_fc,
-                marker_color=_base_color_fc,
-                text=_base_txt_fc,
+                y=_chart_df["bdds_plan_msp"].div(1e6),
+                name="БДДС план",
+                marker_color="#2E86AB",
+                text=_plan_txt_fc,
                 textposition="outside",
                 textangle=0,
                 cliponaxis=False,
                 textfont=dict(size=_tfs_out_fc, color=_bar_lbl_fc),
-                customdata=_chart_df[_base_col_fc].apply(_fmt_hover1),
-                hovertemplate="<b>%{x}</b><br>" + _base_name_fc + ": %{customdata}<extra></extra>",
+                customdata=_chart_df["bdds_plan_msp"].apply(_fmt_hover1),
+                hovertemplate="<b>%{x}</b><br>БДДС план: %{customdata}<extra></extra>",
+            )
+        )
+        fig_fc.add_trace(
+            go.Bar(
+                x=x_fc,
+                y=_chart_df["bdds_fact"].div(1e6),
+                name="БДДС факт",
+                marker_color="#A23B72",
+                text=_fact_txt_fc,
+                textposition="outside",
+                textangle=0,
+                cliponaxis=False,
+                textfont=dict(size=_tfs_out_fc, color=_bar_lbl_fc),
+                customdata=_chart_df["bdds_fact"].apply(_fmt_hover1),
+                hovertemplate="<b>%{x}</b><br>БДДС факт: %{customdata}<extra></extra>",
             )
         )
         fig_fc.add_trace(
@@ -40455,7 +40469,8 @@ def dashboard_forecast_budget(df):
         if not _chart_df.empty:
             _y_main = np.concatenate(
                 [
-                    _chart_df[_base_col_fc].div(1e6).to_numpy(),
+                    _chart_df["bdds_plan_msp"].div(1e6).to_numpy(),
+                    _chart_df["bdds_fact"].div(1e6).to_numpy(),
                     _chart_df["bdds_forecast"].div(1e6).to_numpy(),
                 ]
             )
