@@ -485,8 +485,10 @@ _TABLE_SORT_JS = r"""
           btsBox.style.setProperty("overflow-x", "auto", "important");
           btsBox.style.setProperty("overflow-y", "auto", "important");
           if (btsBox.classList.contains("pred-detail-scroll")) {
-            btsBox.style.setProperty("padding-bottom", "14px", "important");
-            btsBox.style.setProperty("scroll-padding-bottom", "14px", "important");
+            btsBox.style.setProperty("margin", "0", "important");
+            btsBox.style.setProperty("overflow-x", "scroll", "important");
+            btsBox.style.setProperty("padding-bottom", "16px", "important");
+            btsBox.style.setProperty("scroll-padding-bottom", "16px", "important");
           }
         }
         var parentH0 = 0;
@@ -502,6 +504,9 @@ _TABLE_SORT_JS = r"""
         }
         var btsH = boxAttr > 0 ? boxAttr : (parentH0 > 120 ? parentH0
           : (capPx > 0 ? Math.ceil(Math.max(280, capPx + 12)) : 320));
+        if (btsBox.classList.contains("pred-detail-scroll") && btsH > 0) {
+          btsH = btsH + 16;
+        }
         if (btsH > 0) {
           window.parent.postMessage({ type: "streamlit:setFrameHeight", height: btsH }, "*");
           return;
@@ -867,8 +872,12 @@ _COMPACT_FRAME_FIT_JS = r"""
           bts.style.setProperty("overflow-x", "auto", "important");
           bts.style.setProperty("overflow-y", "auto", "important");
           if (bts.classList.contains("pred-detail-scroll") || bts.classList.contains("budget-table-scroll")) {
-            bts.style.setProperty("padding-bottom", "14px", "important");
-            bts.style.setProperty("scroll-padding-bottom", "14px", "important");
+            bts.style.setProperty("padding-bottom", "16px", "important");
+            bts.style.setProperty("scroll-padding-bottom", "16px", "important");
+          }
+          if (bts.classList.contains("pred-detail-scroll")) {
+            bts.style.setProperty("margin", "0", "important");
+            bts.style.setProperty("overflow-x", "scroll", "important");
           }
         }
         var parentH2 = 0;
@@ -882,6 +891,9 @@ _COMPACT_FRAME_FIT_JS = r"""
         }
         var bsh = boxAttr2 > 0 ? boxAttr2 : (parentH2 > 120 ? parentH2
           : (capPx > 0 ? Math.ceil(Math.max(280, capPx + 12)) : 320));
+        if (bts.classList.contains("pred-detail-scroll") && bsh > 0) {
+          bsh = bsh + 16;
+        }
         if (bsh > 0) {
           window.parent.postMessage({ type: "streamlit:setFrameHeight", height: bsh }, "*");
           return;
@@ -1057,10 +1069,11 @@ html:has(.budget-table-scroll),body:has(.budget-table-scroll){
 .budget-table-scroll tr.bd-total-row td{position:sticky!important;bottom:0!important;z-index:4!important;
   box-shadow:0 -3px 10px rgba(0,0,0,0.35)!important}
 .budget-table-scroll.pred-detail-scroll{
-  overflow-x:auto!important;overflow-y:auto!important;
-  padding-bottom:14px!important;scroll-padding-bottom:14px!important;box-sizing:border-box!important;
+  margin:0!important;width:100%!important;max-width:100%!important;
+  overflow-x:scroll!important;overflow-y:auto!important;
+  padding-bottom:16px!important;scroll-padding-bottom:16px!important;box-sizing:border-box!important;
 }
-.budget-table-scroll.pred-detail-scroll::-webkit-scrollbar{width:10px;height:10px;}
+.budget-table-scroll.pred-detail-scroll::-webkit-scrollbar{width:10px;height:12px;}
 .budget-table-scroll.pred-detail-scroll::-webkit-scrollbar-thumb{background:#4a5568;border-radius:6px;}
 .budget-table-scroll.pred-detail-scroll::-webkit-scrollbar-track{background:#1a1c23;}
 
@@ -1324,10 +1337,11 @@ html:has(.budget-table-scroll),body:has(.budget-table-scroll){
 .pred-detail-scroll .pred-days-neg{background:#fee2e2!important;color:#b91c1c!important;}
 .pred-detail-scroll .pred-days-ok{background:#dcfce7!important;color:#166534!important;}
 .budget-table-scroll.pred-detail-scroll{
-  overflow-x:auto!important;overflow-y:auto!important;
-  padding-bottom:14px!important;scroll-padding-bottom:14px!important;box-sizing:border-box!important;
+  margin:0!important;width:100%!important;max-width:100%!important;
+  overflow-x:scroll!important;overflow-y:auto!important;
+  padding-bottom:16px!important;scroll-padding-bottom:16px!important;box-sizing:border-box!important;
 }
-.budget-table-scroll.pred-detail-scroll::-webkit-scrollbar{width:10px;height:10px;}
+.budget-table-scroll.pred-detail-scroll::-webkit-scrollbar{width:10px;height:12px;}
 .budget-table-scroll.pred-detail-scroll::-webkit-scrollbar-thumb{background:#94a3b8;border-radius:6px;}
 .budget-table-scroll.pred-detail-scroll::-webkit-scrollbar-track{background:#e5e7eb;}
 </style>
@@ -2138,11 +2152,13 @@ def render_sortable_html_block(html: str, *, compact_iframe: bool | None = None)
             "</head>",
             '<style>html,body{height:auto!important;min-height:0!important;overflow:hidden!important;margin:0;padding:0;}'
             '.bi-sortable-html-root{height:auto!important;min-height:0!important;overflow:hidden!important;}'
-            'html body .budget-deviation-table-wrap{overflow:hidden!important;width:100%!important;}'
+            'html body .budget-deviation-table-wrap{overflow:hidden!important;width:100%!important;margin:0!important;}'
             f'html body .budget-table-scroll[data-scroll-box-h]{{height:{_h_b}px!important;max-height:{_h_b}px!important;min-height:0!important;'
             'overflow-x:auto!important;overflow-y:auto!important;-webkit-overflow-scrolling:touch!important;'
             'scrollbar-gutter:stable!important;box-sizing:border-box!important;padding-bottom:14px!important;scroll-padding-bottom:14px!important;}'
-            f'html body .budget-table-scroll.pred-detail-scroll[data-scroll-box-h]{{padding-bottom:14px!important;scroll-padding-bottom:14px!important;}}'
+            f'html body .budget-table-scroll.pred-detail-scroll[data-scroll-box-h]{{margin:0!important;width:100%!important;max-width:100%!important;'
+            'overflow-x:scroll!important;overflow-y:auto!important;padding-bottom:16px!important;scroll-padding-bottom:16px!important;'
+            'scrollbar-gutter:stable!important;}}'
             f'html body .budget-table-scroll:not([data-scroll-box-h]){{height:{_h_b}px!important;max-height:{_h_b}px!important;min-height:0!important;'
             'overflow-x:auto!important;overflow-y:auto!important;-webkit-overflow-scrolling:touch!important;'
             'scrollbar-gutter:stable!important;box-sizing:border-box!important;padding-bottom:14px!important;scroll-padding-bottom:14px!important;}'
@@ -2152,7 +2168,8 @@ def render_sortable_html_block(html: str, *, compact_iframe: bool | None = None)
             '</style></head>',
             1,
         )
-        components.html(doc_sc, height=_h_b, scrolling=False)
+        _iframe_h = _h_b + 16 if "pred-detail-scroll" in _b else _h_b
+        components.html(doc_sc, height=_iframe_h, scrolling=False)
         return
     if "pd-dynamics-scroll-wrap" in _b:
         _m_pd = re.search(r'data-pd-box-h="(\d+)"', html or "")

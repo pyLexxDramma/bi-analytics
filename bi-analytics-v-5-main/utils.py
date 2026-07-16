@@ -2934,15 +2934,17 @@ def _render_pred_detail_html_table(
     from dashboards.table_sort_inject import render_sortable_html_block
 
     _pred_h = int(_scroll_box_height_px(html))
+    # +16px: место под горизонтальный scrollbar (иначе обрезается низом iframe).
+    _iframe_h = _pred_h + 16
     _wrap_key = "bitblwrap_" + str(key_prefix).replace(" ", "_")
     st.markdown(
         "<style>"
         f"div[class*='st-key-{_wrap_key}'] div[data-testid='stVerticalBlock']{{gap:0!important;}}"
         f"div[class*='st-key-{_wrap_key}'] div[data-testid='stElementContainer']:has(iframe){{"
-        f"height:{_pred_h}px!important;min-height:{_pred_h}px!important;max-height:{_pred_h}px!important;"
+        f"height:{_iframe_h}px!important;min-height:{_iframe_h}px!important;max-height:{_iframe_h}px!important;"
         "margin:0!important;padding:0!important;overflow:hidden!important;width:100%!important;}}"
         f"div[class*='st-key-{_wrap_key}'] iframe{{"
-        f"height:{_pred_h}px!important;min-height:{_pred_h}px!important;width:100%!important;"
+        f"height:{_iframe_h}px!important;min-height:{_iframe_h}px!important;width:100%!important;"
         "max-width:100%!important;display:block!important;border:0!important;}}"
         f"div[class*='st-key-{_wrap_key}'] [data-testid='stPopover']{{margin-top:8px!important;}}"
         "</style>",

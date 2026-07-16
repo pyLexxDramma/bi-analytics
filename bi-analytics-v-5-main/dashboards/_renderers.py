@@ -40907,11 +40907,19 @@ def _pred_muted_text_color() -> str:
 
 def _pred_expand_detail_table_css(css: str) -> str:
     """Стили таблицы: и legacy .pred-detail-wrap, и scroll-box .pred-detail-scroll."""
-    return re.sub(
+    out = re.sub(
         r"\.pred-detail-wrap(?=\s|[,{.#\[:>+~])",
         ".pred-detail-wrap, .pred-detail-scroll",
         css or "",
     )
+    # Сброс внешних отступов у scroll-box: иначе margin+height вылезают за iframe
+    # и горизонтальный scrollbar обрезается.
+    out += (
+        "\n.budget-table-scroll.pred-detail-scroll{"
+        "margin:0!important;max-width:100%!important;"
+        "overflow-x:scroll!important;overflow-y:auto!important;}"
+    )
+    return out
 
 
 def _pred_dash_mock_css_for_theme() -> str:
@@ -42256,15 +42264,16 @@ def _pred_detail_table_html(
     parts = [
         "<style>",
         f"#{_wrap_id}.budget-deviation-table-wrap {{ display: block; overflow: hidden; width: 100%; "
-        "margin-top: 8px; margin-bottom: 12px; "
+        "margin: 0; "
         f"border: 1px solid {_border}; border-radius: 10px; box-sizing: border-box; }}",
         f"#{_wrap_id} .budget-table-scroll.pred-detail-scroll {{ height: {_st_box_h}px !important; "
-        f"max-height: {_st_box_h}px !important; min-height: 0; overflow-x: auto; overflow-y: auto; "
+        f"max-height: {_st_box_h}px !important; min-height: 0; width: 100% !important; max-width: 100% !important; "
+        "margin: 0 !important; overflow-x: scroll !important; overflow-y: auto !important; "
         "-webkit-overflow-scrolling: touch; scrollbar-gutter: stable; box-sizing: border-box; "
-        "padding-bottom: 14px; scroll-padding-bottom: 14px; "
+        "padding-bottom: 16px; scroll-padding-bottom: 16px; "
         "border: none; border-radius: 0; scrollbar-width: thin; "
         f"scrollbar-color: {_sb}; }}",
-        f"#{_wrap_id} .budget-table-scroll.pred-detail-scroll::-webkit-scrollbar {{ width: 10px; height: 10px; }}",
+        f"#{_wrap_id} .budget-table-scroll.pred-detail-scroll::-webkit-scrollbar {{ width: 10px; height: 12px; }}",
         f"#{_wrap_id} .budget-table-scroll.pred-detail-scroll::-webkit-scrollbar-thumb {{ "
         f"background: {'#94a3b8' if _light_tbl else '#4a5568'}; border-radius: 6px; }}",
         f"#{_wrap_id} .budget-table-scroll.pred-detail-scroll::-webkit-scrollbar-track {{ "
@@ -42273,7 +42282,8 @@ def _pred_detail_table_html(
         f"#{_wrap_id} .pred-detail-scroll tbody tr.pred-scroll-tail td {{ "
         "height: 14px; padding: 0; border: none !important; background: transparent !important; "
         "line-height: 0; font-size: 0; pointer-events: none; }}",
-        f"#{_wrap_id} .pred-detail-scroll table {{ width: max-content; min-width: 100%; }}",
+        f"#{_wrap_id} .pred-detail-scroll table {{ width: max-content !important; min-width: 100% !important; "
+        "table-layout: auto !important; }}",
         "</style>",
         f'<div id="{_wrap_id}" class="budget-deviation-table-wrap pred-detail-table-wrap bi-styled-table-wrap" '
         f'data-bi-rows="{n_rows}">',
