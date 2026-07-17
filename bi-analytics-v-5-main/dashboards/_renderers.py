@@ -17656,7 +17656,11 @@ def _render_rd_monthly_overlay_chart(
     caption_parts: tuple[str, str] | None = None,
 ) -> None:
     """
-    «Динамика по месяцам»: жёлтый — план, зелёный — факт (наложение), красный — просрочено.
+    «Динамика по месяцам» — стек внутри плана (сумма сегментов = план):
+      • зелёный — выполнено вовремя;
+      • жёлтый — остаток плана (ещё не сдан и не просрочен);
+      • красный — просрочено (после жёлтого).
+    Не рисуем красный «поверх» полного плана (иначе 17+17=34 при 17 док.).
     """
     if monthly is None or getattr(monthly, "empty", True):
         return
@@ -17665,16 +17669,26 @@ def _render_rd_monthly_overlay_chart(
         lambda p: f"{RUSSIAN_MONTHS.get(p.month, str(p.month))} {p.year}"
     )
     use_pct = str(metric_mode).strip().startswith("%")
+    plan_n = pd.to_numeric(monthly["plan"], errors="coerce").fillna(0.0).clip(lower=0.0)
+    done_n = pd.to_numeric(monthly["done"], errors="coerce").fillna(0.0).clip(lower=0.0)
+    overdue_n = pd.to_numeric(monthly["overdue"], errors="coerce").fillna(0.0).clip(lower=0.0)
+    # Доли не больше плана; остаток плана = plan − done − overdue.
+    overdue_n = np.minimum(overdue_n, plan_n)
+    done_n = np.minimum(done_n, (plan_n - overdue_n).clip(lower=0.0))
+    rest_n = (plan_n - done_n - overdue_n).clip(lower=0.0)
     if use_pct:
-        monthly["plan_v"] = 100.0
-        monthly["done_v"] = (monthly["done"] / monthly["plan"] * 100).round(1)
-        monthly["overdue_v"] = (monthly["overdue"] / monthly["plan"] * 100).round(1)
+        monthly["done_v"] = np.where(plan_n > 0, (done_n / plan_n * 100).round(1), 0.0)
+        monthly["rest_v"] = np.where(plan_n > 0, (rest_n / plan_n * 100).round(1), 0.0)
+        monthly["overdue_v"] = np.where(
+            plan_n > 0, (overdue_n / plan_n * 100).round(1), 0.0
+        )
         x_title = "% РД (по месяцу плановой даты)"
     else:
-        monthly["plan_v"] = monthly["plan"].round(1)
-        monthly["done_v"] = monthly["done"].round(1)
-        monthly["overdue_v"] = monthly["overdue"].round(1)
+        monthly["done_v"] = done_n.round(1)
+        monthly["rest_v"] = rest_n.round(1)
+        monthly["overdue_v"] = overdue_n.round(1)
         x_title = "Количество разделов"
+    monthly["plan_v"] = plan_n.round(1)
 
     def _lbl(v: float, pct: bool) -> str:
         if pd.isna(v) or float(v) <= 0:
@@ -17693,29 +17707,21 @@ def _render_rd_monthly_overlay_chart(
         # Вертикально: слева направо от текущего к ранним.
         plot_df = monthly.sort_values("_month", ascending=False)
     cat = plot_df["Месяц"].tolist()
+    _x_max = float(
+        pd.to_numeric(plot_df["plan_v"], errors="coerce").fillna(0.0).max()
+        if len(plot_df)
+        else 1.0
+    )
+    _x_max = max(_x_max, 1.0)
 
     fig = go.Figure()
-    # Подписи всегда горизонтально (textangle=0) и не сжимаются (constraintext);
-    # position="auto" уводит мелкие значения за пределы узкого сегмента, где их
-    # видно. Внутри бара — светлый текст (на зелёном/красном) / тёмный (на жёлтом),
-    # снаружи (на светлом фоне) — всегда тёмный.
     _bar_text_common = dict(
         textposition="auto",
         textangle=0,
         constraintext="none",
         cliponaxis=False,
     )
-    _plan_kw = dict(
-        name="План",
-        marker_color="#F39C12",
-        text=[_lbl(v, use_pct) for v in plot_df["plan_v"]],
-        insidetextfont=dict(size=18, color="#1a1a1a"),
-        outsidetextfont=dict(size=18, color="#1a1a1a"),
-        hovertemplate="<b>%{y}</b><br>План: %{x}<extra></extra>"
-        if is_h
-        else "<b>%{x}</b><br>План: %{y}<extra></extra>",
-        **_bar_text_common,
-    )
+    # Порядок стека слева направо: выполнено → остаток плана → просрочка.
     _done_kw = dict(
         name="Выполнено",
         marker_color="#27AE60",
@@ -17725,6 +17731,18 @@ def _render_rd_monthly_overlay_chart(
         hovertemplate="<b>%{y}</b><br>Выполнено: %{x}<extra></extra>"
         if is_h
         else "<b>%{x}</b><br>Выполнено: %{y}<extra></extra>",
+        **_bar_text_common,
+    )
+    _plan_kw = dict(
+        name="План (остаток)",
+        marker_color="#F39C12",
+        text=[_lbl(v, use_pct) for v in plot_df["rest_v"]],
+        customdata=plot_df["plan_v"],
+        insidetextfont=dict(size=18, color="#1a1a1a"),
+        outsidetextfont=dict(size=18, color="#1a1a1a"),
+        hovertemplate="<b>%{y}</b><br>Остаток плана: %{x}<br>План всего: %{customdata}<extra></extra>"
+        if is_h
+        else "<b>%{x}</b><br>Остаток плана: %{y}<br>План всего: %{customdata}<extra></extra>",
         **_bar_text_common,
     )
     _ovd_kw = dict(
@@ -17740,30 +17758,22 @@ def _render_rd_monthly_overlay_chart(
     )
     if is_h:
         fig.add_trace(
-            go.Bar(y=cat, x=plot_df["plan_v"], orientation="h", **_plan_kw)
-        )
-        fig.add_trace(
             go.Bar(y=cat, x=plot_df["done_v"], orientation="h", **_done_kw)
         )
         fig.add_trace(
-            go.Bar(
-                y=cat,
-                x=plot_df["overdue_v"],
-                orientation="h",
-                base=plot_df["done_v"],
-                **_ovd_kw,
-            )
+            go.Bar(y=cat, x=plot_df["rest_v"], orientation="h", **_plan_kw)
+        )
+        fig.add_trace(
+            go.Bar(y=cat, x=plot_df["overdue_v"], orientation="h", **_ovd_kw)
         )
         fig.update_layout(
             xaxis_title=x_title,
             yaxis_title="Месяц",
         )
     else:
-        fig.add_trace(go.Bar(x=cat, y=plot_df["plan_v"], **_plan_kw))
         fig.add_trace(go.Bar(x=cat, y=plot_df["done_v"], **_done_kw))
-        fig.add_trace(
-            go.Bar(x=cat, y=plot_df["overdue_v"], base=plot_df["done_v"], **_ovd_kw)
-        )
+        fig.add_trace(go.Bar(x=cat, y=plot_df["rest_v"], **_plan_kw))
+        fig.add_trace(go.Bar(x=cat, y=plot_df["overdue_v"], **_ovd_kw))
         fig.update_layout(xaxis_title="Месяц", yaxis_title=x_title)
 
     _ax = _fin_chart_axis_color()
@@ -17779,7 +17789,7 @@ def _render_rd_monthly_overlay_chart(
     _leg_m = _line_chart_legend_below(n_items=3, long_labels=False)
     _leg_m["font"] = dict(size=12, color=_fin_chart_legend_text_color())
     fig.update_layout(
-        barmode="overlay",
+        barmode="stack",
         legend=_leg_m,
         showlegend=True,
         height=max(520, min(900, len(cat) * 36)) if is_h else 520,
@@ -17787,8 +17797,33 @@ def _render_rd_monthly_overlay_chart(
         xaxis=dict(tickfont=dict(color=_ax), title_font=dict(color=_ax)),
         yaxis=_yaxis_kw,
     )
-    if use_pct and is_h:
-        fig.update_layout(xaxis=dict(range=[0, 100], ticksuffix="%"))
+    if is_h:
+        _xrange = [0, (_x_max * 1.12 if not use_pct else 100)]
+        if use_pct:
+            fig.update_layout(
+                xaxis=dict(
+                    range=[0, 100],
+                    ticksuffix="%",
+                    tickfont=dict(color=_ax),
+                    title_font=dict(color=_ax),
+                )
+            )
+        else:
+            fig.update_layout(
+                xaxis=dict(
+                    range=_xrange,
+                    tickfont=dict(color=_ax),
+                    title_font=dict(color=_ax),
+                )
+            )
+    elif not use_pct:
+        fig.update_layout(
+            yaxis=dict(
+                range=[0, _x_max * 1.12],
+                tickfont=dict(color=_ax),
+                title_font=dict(color=_ax),
+            )
+        )
     fig = apply_chart_background(fig)
     _leg_m = _line_chart_legend_below(n_items=3, long_labels=False)
     _leg_m["font"] = dict(size=12, color=_fin_chart_legend_text_color())
@@ -18670,12 +18705,12 @@ def _rd_delay_chart_segments(
     *,
     done: bool,
 ) -> dict:
-    """Сегменты графика просрочки РД (схема ПД):
-      • жёлтый — start → «Дата по договору»;
-      • зелёный — start → «Прогнозная дата выдачи» (когда все задачи «Завершено»);
-      • красный — «Дата по договору» → «Прогнозная дата» (просрочка незавершённых).
-    Завершённые разделы целиком зелёные (без красного), незавершённые с прогнозом
-    позже договора — жёлтый + красный до прогнозной даты."""
+    """Сегменты графика просрочки РД (как ПД по ТЗ):
+      • жёлтый — start → «Дата по договору» (подпись — дата по договору);
+      • зелёный — только если все «Завершено» и прогнозная ≤ по договору;
+      • красный — от даты по договору до прогнозной, если прогнозная позже
+        (и для незавершённых, и для завершённых с опозданием).
+    """
     start_n = pd.Timestamp(start_n).normalize()
     contract_n = pd.Timestamp(contract_n).normalize()
     forecast_ts = (
@@ -18686,42 +18721,46 @@ def _rd_delay_chart_segments(
     base_dur = max(int((contract_n - start_n).days), 0)
     contract_lbl = _pd_chart_date_label(contract_n)
     forecast_lbl = _pd_chart_date_label(forecast_ts) if pd.notna(forecast_ts) else ""
-    if done:
-        # Раздел завершён → зелёный до прогнозной (фактической) даты, без просрочки.
-        fact_dur = (
-            max(int((forecast_ts - start_n).days), 0) if pd.notna(forecast_ts) else 0
-        )
+    if pd.notna(forecast_ts) and forecast_ts > contract_n:
+        delay_dur = int((forecast_ts - contract_n).days)
         return {
             "_start_dt": start_n,
             "_bf_dt": contract_n,
-            "_fin_dt": forecast_ts if pd.notna(forecast_ts) else pd.NaT,
+            "_fin_dt": pd.NaT,
+            "_delay_end_dt": forecast_ts,
+            "_base_dur": float(base_dur),
+            "_fact_dur": 0.0,
+            "_delay_dur": float(delay_dur),
+            "_lbl_yellow": contract_lbl,
+            "_lbl_green": "",
+            "_lbl_red": forecast_lbl,
+        }
+    if done and pd.notna(forecast_ts):
+        fact_dur = max(int((forecast_ts - start_n).days), 0)
+        gap_small = abs(int((contract_n - forecast_ts).days)) <= 5
+        return {
+            "_start_dt": start_n,
+            "_bf_dt": contract_n,
+            "_fin_dt": forecast_ts,
             "_delay_end_dt": pd.NaT,
             "_base_dur": float(base_dur),
             "_fact_dur": float(fact_dur),
             "_delay_dur": 0.0,
             "_lbl_yellow": contract_lbl,
-            "_lbl_green": forecast_lbl,
+            "_lbl_green": "" if gap_small or fact_dur <= 0 else forecast_lbl,
             "_lbl_red": "",
         }
-    # Не завершён: красная просрочка от даты по договору до прогнозной (если позже).
-    delay_dur = 0
-    delay_end = pd.NaT
-    lbl_red = ""
-    if pd.notna(forecast_ts) and forecast_ts > contract_n:
-        delay_dur = int((forecast_ts - contract_n).days)
-        delay_end = forecast_ts
-        lbl_red = f"{contract_lbl}/{forecast_lbl}"
     return {
         "_start_dt": start_n,
         "_bf_dt": contract_n,
         "_fin_dt": pd.NaT,
-        "_delay_end_dt": delay_end,
+        "_delay_end_dt": pd.NaT,
         "_base_dur": float(base_dur),
         "_fact_dur": 0.0,
-        "_delay_dur": float(delay_dur),
+        "_delay_dur": 0.0,
         "_lbl_yellow": contract_lbl,
         "_lbl_green": "",
-        "_lbl_red": lbl_red,
+        "_lbl_red": "",
     }
 
 
@@ -18758,6 +18797,18 @@ def _rd_delay_build_date_rows(
         y_col = "Проект"
     work["_y"] = work["_y"].replace({"": "—", "nan": "—"})
 
+    # Отсекаем мусорные даты до расчёта шкалы (иначе max → 2080 и ломает ось).
+    _ymax = pd.Timestamp(ts_report).normalize() + pd.DateOffset(years=10)
+    _ymin = pd.Timestamp("2000-01-01")
+    _c_bad = work["_contract_dt"].notna() & (
+        (work["_contract_dt"] < _ymin) | (work["_contract_dt"] > _ymax)
+    )
+    work.loc[_c_bad, "_contract_dt"] = pd.NaT
+    _f_bad = work["_forecast_dt"].notna() & (
+        (work["_forecast_dt"] < _ymin) | (work["_forecast_dt"] > _ymax)
+    )
+    work.loc[_f_bad, "_forecast_dt"] = pd.NaT
+
     # Глобальное начало шкалы — самая ранняя из дат (договор/прогноз) минус отступ,
     # чтобы у самого раннего срока жёлтый сегмент имел видимую ширину.
     _all_dates = pd.concat([work["_contract_dt"], work["_forecast_dt"]]).dropna()
@@ -18773,7 +18824,8 @@ def _rd_delay_build_date_rows(
         _contracts = grp["_contract_dt"].dropna()
         if _contracts.empty:
             continue
-        contract_n = pd.Timestamp(_contracts.min()).normalize()
+        # По проекту/разделу: конец жёлтого = последнее «по договору» (как max БО у ПД).
+        contract_n = pd.Timestamp(_contracts.max()).normalize()
         _forecasts = grp["_forecast_dt"].dropna()
         forecast_n = (
             pd.Timestamp(_forecasts.max()).normalize() if not _forecasts.empty else None
@@ -20324,11 +20376,13 @@ def dashboard_rd_delay(df, is_pd: bool = False):
     def _to_datetime_series(series):
         return pd.to_datetime(series.astype(str), errors="coerce", dayfirst=True, format="mixed")
 
-    # Add filters
+    # Add filters (развёрнуты по умолчанию — как на экранах «как было»).
+    # panel_key _v2 — сброс старого session_state свёрнутого expander.
     with filters_panel(
         st,
-        panel_key=f"rd_delay_{doc_code}",
+        panel_key=f"rd_delay_{doc_code}_v2",
         reset_keys=["rd_delay_"],
+        expanded=True,
     ):
         filter_col1, filter_col2, filter_col3 = st.columns(3, gap="small")
 
@@ -20947,9 +21001,13 @@ def dashboard_rd_delay(df, is_pd: bool = False):
                 )
                 if _sec_rows.empty:
                     st.info("Нет данных для построения графика.")
-                    return
-                fig = _pd_delay_section_duration_figure(_sec_rows, y_col="_pd_chart_y")
-                _render_pd_delay_duration_chart(fig, f"Просрочка выдачи {doc_code}")
+                else:
+                    fig = _pd_delay_section_duration_figure(
+                        _sec_rows, y_col="_pd_chart_y"
+                    )
+                    _render_pd_delay_duration_chart(
+                        fig, f"Просрочка выдачи {doc_code}"
+                    )
                 _pd_fact_agg = (
                     "_pd_row_fact_ontime"
                     if "_pd_row_fact_ontime" in _pd_kpi_df.columns
@@ -20966,15 +21024,18 @@ def dashboard_rd_delay(df, is_pd: bool = False):
                         .rename(columns={project_col: "Проект"})
                     )
                     y_column = "Проект"
-                    _render_pd_delay_project_indicators(
-                        chart_data, y_column, doc_code
-                    )
+                    if not chart_data.empty:
+                        _render_pd_delay_project_indicators(
+                            chart_data, y_column, doc_code
+                        )
                 else:
                     chart_data = filtered_df[
                         ["_pd_chart_y", "_pd_row_plan", _pd_fact_agg, "_pd_row_overdue"]
                     ].copy()
                     # Без project_col дедуп по шифру на уровне подписей раздела.
-                    chart_data = chart_data.drop_duplicates(subset=["_pd_chart_y"], keep="first")
+                    chart_data = chart_data.drop_duplicates(
+                        subset=["_pd_chart_y"], keep="first"
+                    )
                     chart_data = chart_data.rename(
                         columns={
                             "_pd_chart_y": "Раздел",
@@ -20990,6 +21051,8 @@ def dashboard_rd_delay(df, is_pd: bool = False):
                     if "_pd_row_fact_ontime" in _pd_kpi_df.columns
                     else "_pd_row_fact"
                 )
+                chart_data = pd.DataFrame()
+                y_column = "Проект"
                 if project_col and project_col in _pd_kpi_df.columns:
                     chart_data = (
                         _pd_kpi_df.groupby(project_col, as_index=False)
@@ -21000,46 +21063,44 @@ def dashboard_rd_delay(df, is_pd: bool = False):
                         )
                         .rename(columns={project_col: "Проект"})
                     )
-                    chart_data["_pd_dev_cnt"] = chart_data["_pd_overdue_cnt"]
-                    if chart_data.empty:
+                    # Gantt по датам (ТЗ): жёлтый → max БО, красный/зелёный по Окончанию.
+                    # filtered_df: индекс совпадает с _bs_dt/_bf_dt.
+                    _proj_rows = _pd_build_delay_project_rows(
+                        filtered_df,
+                        project_col=project_col,
+                        display_projects=filtered_df[project_col],
+                        bs_dt=_bs_dt,
+                        ss_dt=_ss_dt,
+                        bf_dt=_bf_dt,
+                        sf_dt=_sf_dt,
+                        af_dt=_af_dt,
+                        pct=_pc_pd,
+                        report_date=pd_report_date,
+                    )
+                    if _proj_rows.empty:
                         st.info("Нет данных для построения графика.")
-                        return
-                    fig = _pd_delay_plan_fact_figure(
-                        chart_data,
-                        y_col="Проект",
-                        overdue_col="_pd_dev_cnt",
-                    )
-                    _h_proj = max(
-                        280,
-                        len(chart_data) * _PD_DELAY_CHART_ROW_PX + 120,
-                    )
-                    st.markdown(
-                        _pd_delay_chart_compact_css(
-                            _PD_DELAY_CHART_KEY_PROJECT, _h_proj
-                        ),
-                        unsafe_allow_html=True,
-                    )
-                    render_chart(
-                        fig,
-                        key=_PD_DELAY_CHART_KEY_PROJECT,
-                        height=_h_proj,
-                        max_height=None,
-                        caption_below=f"Просрочка выдачи {doc_code}",
-                        skip_clamp_zoom=True,
-                        compact=True,
-                    )
-                    y_column = "Проект"
+                    else:
+                        if project_col != "Проект":
+                            _proj_rows = _proj_rows.rename(
+                                columns={project_col: "Проект"}
+                            )
+                        fig = _pd_delay_section_duration_figure(
+                            _proj_rows,
+                            y_col="Проект",
+                            yellow_name="Базовое окончание",
+                            green_name="Окончание",
+                            yellow_hover="Базовое окончание",
+                            green_hover="Окончание",
+                        )
+                        _render_pd_delay_duration_chart(
+                            fig, f"Просрочка выдачи {doc_code}"
+                        )
+                    if not chart_data.empty:
+                        _render_pd_delay_project_indicators(
+                            chart_data, y_column, doc_code
+                        )
                 else:
                     st.info("Нет данных для построения графика.")
-                    return
-
-                if chart_data.empty:
-                    st.info("Нет данных для построения графика.")
-                    return
-
-                _render_pd_delay_project_indicators(
-                    chart_data, y_column, doc_code
-                )
 
             # Помесячная динамика ПД (раньше была только у РД — «график пропал»).
             try:
@@ -32183,20 +32244,25 @@ def _pd_aggregate_delay_segments_for_indices(
     if pd.isna(start_n):
         return None
     bf_n = max(bf_valid) if bf_valid else pd.NaT
-    # ТЗ п.6b: зелёный — только задачи со 100% выполнением.
-    fin_dates: list[pd.Timestamp] = []
+    # ТЗ: на графике «Окончание» = текущий план (plan end / sf), как в детальной таблице.
+    # Не подменяем фактом: иначе при 100% с пустым/ранним actual красный хвост пропадает.
+    fin_all: list[pd.Timestamp] = []
+    all_done = True
+    any_row = False
     for i in idx:
-        if pc.loc[i] < 99.99:
-            continue
-        fin_i = af.loc[i] if pd.notna(af.loc[i]) else sf.loc[i]
+        any_row = True
+        pc_i = float(pc.loc[i]) if pd.notna(pc.loc[i]) else 0.0
+        if pc_i < 99.99:
+            all_done = False
+        fin_i = sf.loc[i] if pd.notna(sf.loc[i]) else af.loc[i]
         if pd.notna(fin_i):
-            fin_dates.append(pd.Timestamp(fin_i).normalize())
-    fin_n = max(fin_dates) if fin_dates else pd.NaT
+            fin_all.append(pd.Timestamp(fin_i).normalize())
+    fin_n = max(fin_all) if fin_all else pd.NaT
     if pd.isna(bf_n) and pd.notna(fin_n):
         bf_n = fin_n
     if pd.isna(bf_n):
         return None
-    done = bool(fin_dates)
+    done = bool(any_row and all_done and fin_all)
     seg = _pd_delay_chart_segments(
         start_n,
         bf_n,
@@ -32231,9 +32297,8 @@ def _pd_segment_from_row_idx(
     if pd.isna(start) or pd.isna(bf):
         return None
     done = pc >= 99.99
-    fin = pd.NaT
-    if done:
-        fin = af if pd.notna(af) else sf
+    # ТЗ: «Окончание» = plan end (как колонка в таблице); факт — только запасной.
+    fin = sf if pd.notna(sf) else af
     return _pd_delay_chart_segments(
         pd.Timestamp(start).normalize(),
         pd.Timestamp(bf).normalize(),
@@ -32835,7 +32900,12 @@ def _pd_delay_chart_segments(
     done: bool,
     ts_report: pd.Timestamp,
 ) -> dict:
-    """Длительности и даты для графика ПД: жёлтый БП, зелёное окончание, красная просрочка."""
+    """Сегменты графика ПД/РД по ТЗ:
+      • жёлтый — start → Базовое окончание (подпись справа — БО);
+      • зелёный — только при 100% и Окончание ≤ БО (подпись — Окончание);
+      • красный — от БО до Окончания, если Окончание > БО (в т.ч. без 100%).
+    Без 100% и без Окончания позже БО — только жёлтый.
+    """
     start_n = pd.Timestamp(start_n).normalize()
     bf_n = pd.Timestamp(bf_n).normalize()
     fin_ts = (
@@ -32844,44 +32914,34 @@ def _pd_delay_chart_segments(
         else pd.NaT
     )
     base_dur = max(int((bf_n - start_n).days), 0)
-    fact_dur = (
-        max(int((fin_ts - start_n).days), 0)
-        if done and pd.notna(fin_ts)
-        else 0
-    )
+    bf_lbl = _pd_chart_date_label(bf_n)
+    af_lbl = _pd_chart_date_label(fin_ts) if pd.notna(fin_ts) else ""
+    fact_dur = 0.0
     delay_dur = 0
     delay_end = pd.NaT
-    bf_lbl = _pd_chart_date_label(bf_n)
-    af_lbl = _pd_chart_date_label(fin_ts) if done and pd.notna(fin_ts) else ""
-    if done and pd.notna(fin_ts) and fin_ts > bf_n:
+    lbl_red = ""
+    lbl_green = ""
+    fin_for_green = pd.NaT
+    if pd.notna(fin_ts) and fin_ts > bf_n:
+        # Жёлтый до БО + красный до Окончания (и при 100%, и без).
         delay_dur = int((fin_ts - bf_n).days)
         delay_end = fin_ts
-        lbl_red = f"{bf_lbl}/{af_lbl}"
-    elif not done and ts_report > bf_n:
-        # ТЗ п.6c: красное — от базового окончания до даты отчёта.
-        delay_dur = int((ts_report - bf_n).days)
-        delay_end = ts_report
-        lbl_red = f"{bf_lbl}/{_pd_chart_date_label(ts_report)}"
-    else:
-        lbl_red = ""
-    gap_small = (
-        done
-        and pd.notna(fin_ts)
-        and abs(int((bf_n - fin_ts).days)) <= 5
-    )
-    lbl_yellow = bf_lbl
-    lbl_green = "" if (not done or gap_small or fact_dur <= 0) else af_lbl
-    if done and gap_small and af_lbl:
-        lbl_green = ""
+        lbl_red = af_lbl
+    elif done and pd.notna(fin_ts) and fin_ts <= bf_n:
+        # 100% вовремя/раньше — зелёный до Окончания, без красного.
+        fact_dur = float(max(int((fin_ts - start_n).days), 0))
+        fin_for_green = fin_ts
+        gap_small = abs(int((bf_n - fin_ts).days)) <= 5
+        lbl_green = "" if gap_small or fact_dur <= 0 else af_lbl
     return {
         "_start_dt": start_n,
         "_bf_dt": bf_n,
-        "_fin_dt": fin_ts if done and pd.notna(fin_ts) else pd.NaT,
+        "_fin_dt": fin_for_green,
         "_delay_end_dt": delay_end,
         "_base_dur": float(base_dur),
         "_fact_dur": float(fact_dur),
         "_delay_dur": float(delay_dur),
-        "_lbl_yellow": lbl_yellow,
+        "_lbl_yellow": bf_lbl,
         "_lbl_green": lbl_green,
         "_lbl_red": lbl_red,
     }
@@ -33317,9 +33377,14 @@ def _pd_delay_section_duration_figure(
     yellow_hover: str = "Базовое окончание",
     green_hover: str = "Окончание",
 ) -> "go.Figure":
-    """ПД: жёлтый max БП, зелёное max окончание, красная просрочка; ось X — даты."""
+    """ПД: жёлтый max БП, зелёное max окончание, красная просрочка; ось X — даты.
+
+    Важно: у Plotly Bar на date-axis ``x`` — длительность в ms, ``base`` — дата начала.
+    Передача абсолютной даты в ``x`` даёт ширину «от 1970» и ось уезжает в ~2080.
+    """
     import plotly.graph_objects as go
 
+    _MS_DAY = 86400000.0
     _cols = [
         y_col,
         "_start_dt",
@@ -33362,81 +33427,110 @@ def _pd_delay_section_duration_figure(
 
     ticktext = [_wrap_label(lbl) for lbl in y_labels]
 
-    def _pd_plotly_dt_list(series: pd.Series) -> list:
-        out: list = []
-        for v in series:
-            ts = pd.to_datetime(v, errors="coerce")
-            if pd.isna(ts):
-                out.append(None)
-            else:
-                out.append(pd.Timestamp(ts).to_pydatetime())
-        return out
+    def _as_ts(v):
+        ts = pd.to_datetime(v, errors="coerce")
+        if pd.isna(ts):
+            return pd.NaT
+        return pd.Timestamp(ts).normalize()
 
-    starts_py = _pd_plotly_dt_list(starts)
-    bf_py = _pd_plotly_dt_list(bf_ends)
+    def _bar_len_ms(start, end) -> float | None:
+        s = _as_ts(start)
+        e = _as_ts(end)
+        if pd.isna(s) or pd.isna(e) or e < s:
+            return None
+        ms = float((e - s) / pd.Timedelta(milliseconds=1))
+        return ms if ms > 0 else _MS_DAY
+
+    def _base_dt(v):
+        ts = _as_ts(v)
+        return None if pd.isna(ts) else ts.to_pydatetime()
+
+    yellow_y: list[str] = []
+    yellow_len: list[float] = []
+    yellow_base: list = []
+    yellow_cd: list[str] = []
+    for y_lbl, st, bf_e in zip(y_labels, starts.tolist(), bf_ends.tolist()):
+        ln = _bar_len_ms(st, bf_e)
+        b = _base_dt(st)
+        if ln is None or b is None:
+            continue
+        yellow_y.append(y_lbl)
+        yellow_len.append(ln)
+        yellow_base.append(b)
+        yellow_cd.append(_pd_chart_date_label(bf_e))
 
     fig = go.Figure()
-    # Жёлтый БП (низ), зелёное окончание поверх (100%), красная просрочка отдельно.
-    fig.add_trace(
-        go.Bar(
-            name=yellow_name,
-            orientation="h",
-            y=y_labels,
-            x=bf_py,
-            base=starts_py,
-            marker=dict(color="#F1C40F"),
-            hovertemplate="%{y}<br>"
-            + yellow_hover
-            + ": %{x|%d.%m.%Y}<extra></extra>",
+    if yellow_y:
+        fig.add_trace(
+            go.Bar(
+                name=yellow_name,
+                orientation="h",
+                y=yellow_y,
+                x=yellow_len,
+                base=yellow_base,
+                marker=dict(color="#F1C40F"),
+                customdata=yellow_cd,
+                hovertemplate="%{y}<br>"
+                + yellow_hover
+                + ": %{customdata}<extra></extra>",
+            )
         )
-    )
     green_y: list[str] = []
-    green_x: list = []
+    green_len: list[float] = []
     green_base: list = []
+    green_cd: list[str] = []
     for y_lbl, st, fin_e in zip(y_labels, starts.tolist(), fin_ends.tolist()):
-        if pd.isna(fin_e) or pd.isna(st):
-            continue
-        st_n = pd.Timestamp(st).normalize()
-        fin_n = pd.Timestamp(fin_e).normalize()
-        if fin_n <= st_n:
+        ln = _bar_len_ms(st, fin_e)
+        b = _base_dt(st)
+        if ln is None or b is None:
             continue
         green_y.append(y_lbl)
-        green_x.append(fin_n.to_pydatetime())
-        green_base.append(st_n.to_pydatetime())
+        green_len.append(ln)
+        green_base.append(b)
+        green_cd.append(_pd_chart_date_label(fin_e))
     if green_y:
         fig.add_trace(
             go.Bar(
                 name=green_name,
                 orientation="h",
                 y=green_y,
-                x=green_x,
+                x=green_len,
                 base=green_base,
                 marker=dict(color="#27AE60"),
+                customdata=green_cd,
                 hovertemplate="%{y}<br>"
                 + green_hover
-                + ": %{x|%d.%m.%Y}<extra></extra>",
+                + ": %{customdata}<extra></extra>",
             )
         )
     red_y: list[str] = []
-    red_x: list = []
+    red_len: list[float] = []
     red_base: list = []
+    red_cd: list[str] = []
     for y_lbl, bf_e, d_e, d_days in zip(
         y_labels, bf_ends.tolist(), delay_ends.tolist(), delay_d.tolist()
     ):
-        if float(d_days) > 0 and pd.notna(bf_e) and pd.notna(d_e):
-            red_y.append(y_lbl)
-            red_x.append(pd.Timestamp(d_e).to_pydatetime())
-            red_base.append(pd.Timestamp(bf_e).to_pydatetime())
+        if float(d_days) <= 0:
+            continue
+        ln = _bar_len_ms(bf_e, d_e)
+        b = _base_dt(bf_e)
+        if ln is None or b is None:
+            continue
+        red_y.append(y_lbl)
+        red_len.append(ln)
+        red_base.append(b)
+        red_cd.append(_pd_chart_date_label(d_e))
     if red_y:
         fig.add_trace(
             go.Bar(
                 name="Просрочка",
                 orientation="h",
                 y=red_y,
-                x=red_x,
+                x=red_len,
                 base=red_base,
                 marker=dict(color="#C0392B"),
-                hovertemplate="%{y}<br>Просрочка до %{x|%d.%m.%Y}<extra></extra>",
+                customdata=red_cd,
+                hovertemplate="%{y}<br>Просрочка до %{customdata}<extra></extra>",
             )
         )
     for y_lbl, st, bf_e, fin_e, d_e, d_days, ly, lg, lr in zip(
@@ -33451,10 +33545,10 @@ def _pd_delay_section_duration_figure(
         work["_lbl_red"].fillna("").astype(str).tolist(),
     ):
         _ann_kw = dict(y=y_lbl, showarrow=False, yanchor="middle")
-        bf_n = pd.Timestamp(bf_e).normalize() if pd.notna(bf_e) else pd.NaT
-        fin_n = pd.Timestamp(fin_e).normalize() if pd.notna(fin_e) else pd.NaT
-        # Жёлтая подпись — когда виден жёлтый хвост (не 100% или досрочное завершение).
-        if str(ly).strip() and pd.notna(bf_n) and (pd.isna(fin_n) or fin_n <= bf_n):
+        bf_n = _as_ts(bf_e)
+        fin_n = _as_ts(fin_e)
+        # Жёлтая подпись справа от БО (когда нет зелёного поверх жёлтого хвоста).
+        if str(ly).strip() and pd.notna(bf_n) and (pd.isna(fin_n) or fin_n < bf_n):
             _y_ann = _pd_delay_date_annotation(
                 bf_e, st, ly, inside_color="#1a1a1a", min_days=10, anchor_end=True
             )
@@ -33474,7 +33568,7 @@ def _pd_delay_section_duration_figure(
                 inside_color="#FFFFFF",
                 outside_color="#E8E8E8",
                 min_days=8,
-                anchor_end=False,
+                anchor_end=True,
             )
             if _r_ann:
                 fig.add_annotation(**_ann_kw, **_r_ann)
@@ -33501,7 +33595,14 @@ def _pd_delay_section_duration_figure(
         tickfont=dict(size=11),
         automargin=True,
     )
-    _x_pts = [t for t in starts_py + bf_py + green_x + red_x if t is not None]
+    _x_pts = []
+    for st, bf_e, fin_e, d_e in zip(
+        starts.tolist(), bf_ends.tolist(), fin_ends.tolist(), delay_ends.tolist()
+    ):
+        for v in (st, bf_e, fin_e, d_e):
+            ts = _as_ts(v)
+            if pd.notna(ts):
+                _x_pts.append(ts.to_pydatetime())
     if _x_pts:
         d0 = min(_x_pts)
         d1 = max(_x_pts)
@@ -33528,7 +33629,6 @@ def _pd_delay_section_duration_figure(
         title_font=dict(color=_ax_clr),
     )
     return fig
-
 
 def _pd_delay_plan_fact_figure(
     rows: pd.DataFrame,
@@ -34398,11 +34498,13 @@ def dashboard_documentation(
     rd_metric_mode = "Количество разделов"
     show_forecast_date_col = True
 
-    # Add filters
+    # Add filters (развёрнуты по умолчанию — как на экранах «как было»).
+    # panel_key _v2 — сброс старого session_state свёрнутого expander.
     with filters_panel(
         st,
-        panel_key=f"{_doc_fk}filters",
+        panel_key=f"{_doc_fk}filters_v2",
         reset_keys=[_doc_fk],
+        expanded=True,
     ):
         filter_col1, filter_col2, filter_col3 = st.columns(3, gap="small")
         # Filter by project (несколько проектов; пусто = все)
@@ -35887,8 +35989,20 @@ def dashboard_documentation(
                         _chart_sf, fcst_line_mask, gran_key
                     )
                     fcst_curve["Тип"] = "Прогноз по проекту"
-                    curves = [plan_curve, fcst_curve]
-                    dynamics_df = pd.concat(curves, ignore_index=True)
+                    # Факт: те же разделы, что в KPI «Факт на текущую дату» (не путать с прогнозом).
+                    _fact_dates = af.copy()
+                    _fact_proxy = done_sec & _fact_dates.isna()
+                    if _fact_proxy.any():
+                        _fact_dates = _fact_dates.where(~_fact_proxy, _chart_sf)
+                    fact_curve = _pd_cumsum_by_granularity(
+                        _fact_dates, done_sec & _fact_dates.notna(), gran_key
+                    )
+                    fact_curve["Тип"] = "Факт"
+                    curves = [plan_curve, fcst_curve, fact_curve]
+                    dynamics_df = pd.concat(
+                        [c for c in curves if c is not None and not c.empty],
+                        ignore_index=True,
+                    )
                     all_dates = pd.to_datetime(dynamics_df["Дата"], errors="coerce").dropna()
                     if not all_dates.empty:
                         start_anchor = (all_dates.min() - pd.Timedelta(days=1)).normalize()
@@ -35906,7 +36020,16 @@ def dashboard_documentation(
                                 "Тип": ["Прогноз по проекту"],
                             }
                         )
-                        dynamics_df = pd.concat([zplan, zfcst, dynamics_df], ignore_index=True)
+                        zfact = pd.DataFrame(
+                            {
+                                "Дата": [start_anchor],
+                                "Количество": [0.0],
+                                "Тип": ["Факт"],
+                            }
+                        )
+                        dynamics_df = pd.concat(
+                            [zplan, zfcst, zfact, dynamics_df], ignore_index=True
+                        )
                     dynamics_df = dynamics_df.sort_values(["Тип", "Дата"])
                     c1, c2, c3, c4 = st.columns(4, gap="small")
                     with c1:
@@ -35972,12 +36095,13 @@ def dashboard_documentation(
                     dynamics_df["Текст"] = dynamics_df["Количество"].apply(
                         lambda x: f"{x:.0f}" if pd.notna(x) and float(x) != 0.0 else ""
                     )
-                    if plan_curve.empty and fcst_curve.empty:
+                    if plan_curve.empty and fcst_curve.empty and fact_curve.empty:
                         st.warning(
                             "Нет данных с датами для графика «Динамика выдачи ПД» "
                             "(проверьте базовое/плановое окончание в MSP)."
                         )
                     else:
+                        _PD_FACT_LINE_COLOR = "#27AE60"
                         fig_dynamics = px.line(
                             dynamics_df,
                             x="Дата",
@@ -35990,6 +36114,14 @@ def dashboard_documentation(
                             color_discrete_map={
                                 "План по проекту (БП)": _PD_PLAN_LINE_COLOR,
                                 "Прогноз по проекту": _PD_FCST_LINE_COLOR,
+                                "Факт": _PD_FACT_LINE_COLOR,
+                            },
+                            category_orders={
+                                "Тип": [
+                                    "План по проекту (БП)",
+                                    "Прогноз по проекту",
+                                    "Факт",
+                                ]
                             },
                         )
                         # Подписи оси X — месяцы (как у РД), иначе тики «день» пропадали
@@ -36009,7 +36141,7 @@ def dashboard_documentation(
                             else _pd_y_min - max(_pd_foot, abs(_pd_y_min) * 0.15)
                         )
                         _pd_ax = _fin_chart_axis_color()
-                        _pd_leg = _line_chart_legend_above(n_items=2, long_labels=True)
+                        _pd_leg = _line_chart_legend_above(n_items=3, long_labels=True)
                         fig_dynamics.update_layout(
                             margin=dict(l=56, r=36, t=88, b=120),
                             yaxis_title="Количество разделов ПД",
@@ -36059,10 +36191,16 @@ def dashboard_documentation(
                                 _tr.marker.color = _PD_FCST_LINE_COLOR
                                 _tr.marker.size = 9
                                 _tr.textfont = dict(color=_PD_FCST_LINE_COLOR, size=10)
+                            elif "Факт" in _tn:
+                                _tr.line.color = _PD_FACT_LINE_COLOR
+                                _tr.line.width = 2.5
+                                _tr.marker.color = _PD_FACT_LINE_COLOR
+                                _tr.marker.size = 8
+                                _tr.textfont = dict(color=_PD_FACT_LINE_COLOR, size=10)
                         fig_dynamics = apply_chart_background(fig_dynamics)
                         # apply_chart_background сбрасывает tickmode/легенду — возвращаем.
                         _pd_ax = _fin_chart_axis_color()
-                        _pd_leg = _line_chart_legend_above(n_items=2, long_labels=True)
+                        _pd_leg = _line_chart_legend_above(n_items=3, long_labels=True)
                         _pd_leg["font"] = dict(
                             size=13, color=_fin_chart_legend_text_color()
                         )

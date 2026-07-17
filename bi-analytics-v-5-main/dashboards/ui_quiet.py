@@ -314,14 +314,23 @@ def _filters_expander_session_key(
     return f"bi_filters_exp_{digest}"
 
 
-def _collapse_filters_expander_on_dashboard_open(st: Any, expander_key: str) -> None:
-    """При переходе на другой дашборд — блок «Фильтры» свёрнут."""
+def _collapse_filters_expander_on_dashboard_open(
+    st: Any,
+    expander_key: str,
+    *,
+    default_expanded: bool = False,
+) -> None:
+    """При переходе на другой дашборд — задать состояние expander «Фильтры».
+
+    По умолчанию свёрнут; для РД/ПД передают ``default_expanded=True``,
+    чтобы фильтры снова были видны как раньше (не «исчезли»).
+    """
     if not hasattr(st, "session_state"):
         return
     cur_dash = str(st.session_state.get("current_dashboard") or "")
     if st.session_state.get(_FILTERS_LAST_DASHBOARD_KEY) != cur_dash:
         st.session_state[_FILTERS_LAST_DASHBOARD_KEY] = cur_dash
-        st.session_state[expander_key] = False
+        st.session_state[expander_key] = bool(default_expanded)
 
 
 def _infer_filter_reset_value(key: str, previous: Any) -> Any:
@@ -519,7 +528,9 @@ def filters_popover(
     chip_slot = st.empty()
     handle = _FiltersPopoverHandle(st, chip_slot)
     _exp_key = _filters_expander_session_key(st, pop_label, reset_keys, panel_key)
-    _collapse_filters_expander_on_dashboard_open(st, _exp_key)
+    _collapse_filters_expander_on_dashboard_open(
+        st, _exp_key, default_expanded=bool(expanded)
+    )
     with st.expander(pop_label, expanded=expanded, key=_exp_key):
         if reset_keys:
             _rk = [str(k) for k in reset_keys]
