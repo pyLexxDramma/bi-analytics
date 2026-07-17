@@ -2427,10 +2427,24 @@ def _deviations_block_token_from_task_name(task_name) -> str:
     return ""
 
 
+def _deviations_notes_pref_score(note: str) -> tuple[int, int]:
+    """Приоритет заметки: штат/план выше имени подрядчика; длиннее — лучше."""
+    s = str(note or "").casefold()
+    score = 0
+    if "люди" in s or "план" in s or "факт" in s:
+        score += 3
+    if "чел" in s:
+        score += 1
+    if s.startswith("ооо") or s.startswith("ао ") or s.startswith("зао"):
+        score -= 2
+    return (score, len(str(note or "")))
+
+
 def _deviations_block_notes_lookup(
     full_df: pd.DataFrame, notes_col: str | None
-) -> dict[str, str]:
-    """Заметки с задач ур. 3 «Блок …» — для строк ур. 5 без собственных заметок."""
+) -> dict[str, dict[str, str]]:
+    """Заметки L3 «Блок …» по проекту: ключи `by_name` (строение) и `by_token`."""
+    empty: dict[str, dict[str, str]] = {"by_name": {}, "by_token": {}}
     if (
         full_df is None
         or getattr(full_df, "empty", True)
@@ -2438,20 +2452,45 @@ def _deviations_block_notes_lookup(
         or notes_col not in full_df.columns
         or "level" not in full_df.columns
     ):
-        return {}
+        return empty
     tc = _deviations_maket_resolve_task_col(full_df)
     if not tc:
-        return {}
-    out: dict[str, str] = {}
+        return empty
+    out_name: dict[str, str] = {}
+    out_tok: dict[str, str] = {}
+    best_name: dict[str, tuple[int, int]] = {}
+    best_tok: dict[str, tuple[int, int]] = {}
     lvl = pd.to_numeric(full_df["level"], errors="coerce")
     for idx in full_df.index[lvl == 3]:
         note = _clean_display_str(full_df.at[idx, notes_col])
         if not note:
             continue
-        tok = _deviations_block_token_from_task_name(full_df.at[idx, tc])
-        if tok and tok not in out:
-            out[tok] = note
-    return out
+        proj = ""
+        if "project name" in full_df.columns:
+            proj = _clean_display_str(full_df.at[idx, "project name"])
+        tname = _clean_display_str(full_df.at[idx, tc])
+        if not tname:
+            continue
+        sc = _deviations_notes_pref_score(note)
+        nk = f"{proj.casefold()}||{tname.casefold()}"
+        if sc > best_name.get(nk, (-999, -1)):
+            best_name[nk] = sc
+            out_name[nk] = note
+        # короткое имя без площади — тоже ключ строения
+        base = re.sub(r"\s*\([^)]*m2[^)]*\)\s*$", "", tname, flags=re.I)
+        base = re.sub(r"\s*\([^)]*м2[^)]*\)\s*$", "", base, flags=re.I).strip()
+        if base and base.casefold() != tname.casefold():
+            nk2 = f"{proj.casefold()}||{base.casefold()}"
+            if sc > best_name.get(nk2, (-999, -1)):
+                best_name[nk2] = sc
+                out_name[nk2] = note
+        tok = _deviations_block_token_from_task_name(tname)
+        if tok:
+            tk = f"{proj.casefold()}||{tok}"
+            if sc > best_tok.get(tk, (-999, -1)):
+                best_tok[tk] = sc
+                out_tok[tk] = note
+    return {"by_name": out_name, "by_token": out_tok}
 
 
 def _deviations_maket_row_note(
@@ -2459,8 +2498,9 @@ def _deviations_maket_row_note(
     frame: pd.DataFrame,
     notes_col: str | None,
     *,
-    block_notes_lookup: dict[str, str] | None = None,
+    block_notes_lookup: dict[str, dict[str, str]] | None = None,
 ) -> str:
+    """Заметки: своя строка L5 → L3-предок по дереву → L3 «Блок …» по имени задачи."""
     own = (
         _clean_display_str(row.get(notes_col))
         if notes_col and notes_col in frame.columns
@@ -2470,11 +2510,35 @@ def _deviations_maket_row_note(
         return own
     if not block_notes_lookup:
         return ""
+    by_name = block_notes_lookup.get("by_name") or {}
+    by_token = block_notes_lookup.get("by_token") or {}
+    proj = (
+        _clean_display_str(row.get("project name"))
+        if "project name" in frame.columns
+        else ""
+    )
+    # 1) строение из иерархии (_dt_lvl3_key)
+    l3 = ""
+    if "_dt_lvl3_key" in frame.columns:
+        l3 = _clean_display_str(row.get("_dt_lvl3_key"))
+    if l3:
+        hit = by_name.get(f"{proj.casefold()}||{l3.casefold()}", "")
+        if hit:
+            return hit
+        base = re.sub(r"\s*\([^)]*m2[^)]*\)\s*$", "", l3, flags=re.I)
+        base = re.sub(r"\s*\([^)]*м2[^)]*\)\s*$", "", base, flags=re.I).strip()
+        if base:
+            hit = by_name.get(f"{proj.casefold()}||{base.casefold()}", "")
+            if hit:
+                return hit
+    # 2) токен «Блок X» из названия L5 (для задач под «Общие работы»)
     tc = _deviations_maket_resolve_task_col(frame)
     if not tc:
         return ""
     tok = _deviations_block_token_from_task_name(row.get(tc))
-    return block_notes_lookup.get(tok, "")
+    if not tok:
+        return ""
+    return by_token.get(f"{proj.casefold()}||{tok}", "")
 
 
 def _deviations_maket_col_class(col_name: str) -> str:
@@ -2777,18 +2841,19 @@ def _deviations_stacked_bar_add_totals(
 
 
 def _deviations_dynamics_stacked_bar_finalize(fig, layout_kw: dict) -> None:
-    """После apply_chart_background — вернуть высоту, отступы и легенду под осью X."""
+    """После apply_chart_background — вернуть высоту, отступы и легенду справа."""
+    _leg = dict(layout_kw.get("legend") or {})
     fig.update_layout(
         height=layout_kw["height"],
         margin=layout_kw["margin"],
         showlegend=True,
-        legend=layout_kw["legend"],
+        legend=_leg,
         xaxis=layout_kw.get("xaxis"),
         yaxis=layout_kw.get("yaxis"),
     )
-    _leg = layout_kw.get("legend") or {}
-    if _leg.get("y") is not None:
-        fig.update_layout(legend=dict(_leg))
+    # Повторно — apply_chart_background мог снова поставить горизонтальную легенду снизу.
+    if _leg:
+        fig.update_layout(showlegend=True, legend=_leg, margin=layout_kw["margin"])
 
 
 def _deviations_dynamics_stacked_bar_layout(
@@ -2797,44 +2862,52 @@ def _deviations_dynamics_stacked_bar_layout(
     period_x_title: str,
     ax_clr: str,
     multi_proj: bool = False,
+    n_legend_items: int = 0,
 ) -> dict:
-    """Layout stacked bar «Динамика причин»: легенда строго под подписью «Период …»."""
+    """Layout stacked bar «Динамика причин»: легенда справа — без наложения на ось X."""
     n = max(1, int(n_periods or 1))
+    n_leg = max(1, int(n_legend_items or 1))
     t_margin = 72 if multi_proj else 56
-    tick_block = 78 + min(n, 14) * 3
-    title_block = 34
-    legend_block = 58
-    b_margin = tick_block + title_block + legend_block + 22
+    # Место под наклонные подписи месяцев + заголовок оси (легенды снизу больше нет).
+    tick_block = 88 + min(n, 14) * 3
+    title_block = 36
+    b_margin = tick_block + title_block + 16
     plot_h = int(max(420, 360 + min(n, 28) * 14))
     height = plot_h + t_margin + b_margin
-    # y < 0 — ниже области plot: сначала подписи месяцев, затем «Период (месяц)», затем легенда.
-    leg_y = -0.28 - min(n, 12) * 0.014
+    # Ширина правой колонки под легенду (длинные названия причин).
+    r_margin = int(min(320, max(168, 110 + n_leg * 8)))
     return dict(
         barmode="stack",
         bargap=0.34,
         bargroupgap=0.06,
         showlegend=True,
-        legend=standard_chart_legend(
-            title=dict(text="Причина отклонения"),
-            font=dict(size=10),
-            y=leg_y,
+        legend=dict(
+            orientation="v",
             yanchor="top",
-            x=0.5,
-            xanchor="center",
+            y=1.0,
+            xanchor="left",
+            x=1.02,
+            bgcolor="rgba(0,0,0,0)",
+            borderwidth=0,
+            tracegroupgap=4,
+            itemwidth=30,
+            font=dict(size=10),
+            title=dict(text="Причина отклонения", font=dict(size=11)),
         ),
         margin=dict(
             l=56,
-            r=240 if multi_proj else 40,
-            t=72 if multi_proj else 56,
+            r=r_margin,
+            t=t_margin,
             b=b_margin,
         ),
         height=height,
         xaxis=dict(
-            title=dict(text=period_x_title, standoff=18, font=dict(size=12, color=ax_clr)),
+            title=dict(text=period_x_title, standoff=14, font=dict(size=12, color=ax_clr)),
             tickangle=-38,
             tickfont=dict(size=10, color=ax_clr),
             ticklabelstandoff=4,
-            automargin=True,
+            # automargin тянет подписи в зону легенды — отступы задаём вручную.
+            automargin=False,
         ),
         yaxis=dict(
             title=dict(
@@ -2853,6 +2926,15 @@ def _deviations_plotly_project_chart_title(fig, project_name: str) -> None:
     if not name:
         return
     try:
+        # Нельзя margin=dict(t=…) целиком — Plotly затирает b/l/r и легенда наезжает на ось.
+        _prev_m = getattr(fig.layout, "margin", None)
+        _m = {}
+        if _prev_m is not None:
+            for _k in ("l", "r", "t", "b", "pad", "autoexpand"):
+                _v = getattr(_prev_m, _k, None)
+                if _v is not None:
+                    _m[_k] = _v
+        _m["t"] = max(72, int(_m.get("t") or 0))
         fig.update_layout(
             title=dict(
                 text=name,
@@ -2860,7 +2942,7 @@ def _deviations_plotly_project_chart_title(fig, project_name: str) -> None:
                 xanchor="center",
                 font=dict(size=18, color=_fin_chart_label_color(dark="#e8eef5", light="#111827")),
             ),
-            margin=dict(t=72),
+            margin=_m,
         )
         _pn_prefixes = ("project name=", "Проект=", "project=")
         fig.for_each_annotation(
@@ -2869,6 +2951,22 @@ def _deviations_plotly_project_chart_title(fig, project_name: str) -> None:
             and any(str(a.text).startswith(p) for p in _pn_prefixes)
             else None
         )
+    except Exception:
+        pass
+
+
+def _deviations_dynamics_hide_zero_legend_traces(fig) -> None:
+    """Убрать из легенды серии, где все значения 0 (после grid-reindex)."""
+    try:
+        for tr in fig.data:
+            if getattr(tr, "type", None) != "bar":
+                continue
+            ys = getattr(tr, "y", None)
+            if ys is None:
+                continue
+            arr = pd.to_numeric(pd.Series(list(ys)), errors="coerce").fillna(0.0)
+            if len(arr) and float(arr.abs().sum()) == 0.0:
+                tr.update(showlegend=False)
     except Exception:
         pass
 
@@ -3072,6 +3170,8 @@ def build_deviations_maket_export_df(
         else _gantt_resolve_notes_column(maket_df)
     )
     _src = notes_source_df if notes_source_df is not None else table_reason_df
+    if _src is not None and not getattr(_src, "empty", True):
+        _src = _deviations_maket_attach_ancestor_keys(_src.copy())
     _block_notes = _deviations_block_notes_lookup(_src, notes_col_m)
     _id_col_m = _deviations_maket_task_id_col(maket_df)
     _maket_out = []
@@ -3127,6 +3227,8 @@ def _render_deviations_maket_table(
     if not notes_col_m or notes_col_m not in getattr(maket_df, "columns", []):
         notes_col_m = _gantt_resolve_notes_column(maket_df)
     _src = notes_source_df if notes_source_df is not None else table_reason_df
+    if _src is not None and not getattr(_src, "empty", True):
+        _src = _deviations_maket_attach_ancestor_keys(_src.copy())
     _block_notes = _deviations_block_notes_lookup(_src, notes_col_m)
 
     if maket_df.empty:
@@ -6811,7 +6913,7 @@ def _apply_deviations_combined_filters(
 def _apply_deviations_dynamics_filters(
     df: pd.DataFrame, *, building_col=None
 ) -> pd.DataFrame:
-    """Фильтры динамики: проект/блок/строение/причина без среза по «Период»."""
+    """Фильтры динамики: проект/блок/строение/причина + дедуп снимков под ось времени."""
     if df is None or getattr(df, "empty", True):
         return df
     if building_col is None:
@@ -6835,7 +6937,17 @@ def _apply_deviations_dynamics_filters(
         filtered_df, selected_block, selected_building, building_col
     )
     filtered_df = _deviations_apply_reason_filter(filtered_df)
-    filtered_df = _deviations_apply_snapshot_month_filter(filtered_df, dynamics=True)
+    # Ось «по plan end» (по умолчанию) — только актуальный снимок, как «Доли причин».
+    # «По дате снимка» — последний файл каждого месяца выгрузки (история).
+    _time_axis = str(
+        st.session_state.get("dynamics_time_axis_combo")
+        or st.session_state.get("dynamics_time_axis_pravki")
+        or _DEV_TIME_AXIS_PLAN
+    )
+    _hist_snapshots = str(_time_axis).startswith("По дате снимка")
+    filtered_df = _deviations_apply_snapshot_month_filter(
+        filtered_df, dynamics=_hist_snapshots
+    )
     return filtered_df
 
 
@@ -7617,7 +7729,16 @@ def dashboard_dynamics_of_deviations(df, hide_shared_filters=False):
 
     if hide_shared_filters:
         building_col = _find_deviations_building_column(df)
-        dyn_src = _deviations_dynamics_source_df()
+        _time_axis_pre = str(
+            st.session_state.get("dynamics_time_axis_combo", _DEV_TIME_AXIS_PLAN)
+            or _DEV_TIME_AXIS_PLAN
+        )
+        # По plan end — актуальный снимок (как «Доли причин»); история снимков — только для оси «по дате снимка».
+        dyn_src = (
+            _deviations_dynamics_source_df()
+            if str(_time_axis_pre).startswith("По дате снимка")
+            else None
+        )
         if dyn_src is not None and not getattr(dyn_src, "empty", True):
             if building_col is None:
                 building_col = _find_deviations_building_column(dyn_src)
@@ -8151,6 +8272,48 @@ def dashboard_dynamics_of_deviations(df, hide_shared_filters=False):
                         reason_data["project name"].astype(str).str.strip() == _pname
                     ].copy()
                     _rd_p = _rd_p.drop(columns=["project name"], errors="ignore")
+                    # В легенду — только причины с ненулевым итогом по проекту.
+                    _leg_n = 0
+                    _keep_rs: list = []
+                    if "_reason_bucket" in _rd_p.columns and "Количество задач" in _rd_p.columns:
+                        _rs_sum = (
+                            pd.to_numeric(_rd_p["Количество задач"], errors="coerce")
+                            .fillna(0.0)
+                            .groupby(_rd_p["_reason_bucket"], observed=False)
+                            .sum()
+                        )
+                        _keep_rs = [
+                            r for r, v in _rs_sum.items() if float(v) > 0.0
+                        ]
+                        _leg_n = len(_keep_rs)
+                        if _keep_rs:
+                            _rd_p = _rd_p[
+                                _rd_p["_reason_bucket"].isin(_keep_rs)
+                            ].copy()
+                    # Ось X — только месяцы с данными у этого проекта (как на корректном виде).
+                    _periods_p: list = []
+                    if "period" in _rd_p.columns and "Количество задач" in _rd_p.columns:
+                        _psum = (
+                            pd.to_numeric(_rd_p["Количество задач"], errors="coerce")
+                            .fillna(0.0)
+                            .groupby(_rd_p["period"], observed=False)
+                            .sum()
+                        )
+                        _periods_p = [
+                            p
+                            for p in (_periods_grid or list(_psum.index))
+                            if float(_psum.get(p, 0.0)) > 0.0
+                        ]
+                        if _periods_p:
+                            _rd_p = _rd_p[_rd_p["period"].isin(_periods_p)].copy()
+                    if not _periods_p:
+                        _periods_p = list(_periods_grid or [])
+                    _reason_order_p = (
+                        [r for r in _reason_order if r in set(_keep_rs)]
+                        if _keep_rs
+                        else list(_reason_order)
+                    )
+                    _n_per_p = max(1, len(_periods_p))
                     fig = px.bar(
                         _rd_p,
                         x="period",
@@ -8159,8 +8322,8 @@ def dashboard_dynamics_of_deviations(df, hide_shared_filters=False):
                         title=None,
                         color_discrete_map=_clr_map or None,
                         category_orders={
-                            "period": _periods_grid,
-                            "_reason_bucket": _reason_order,
+                            "period": _periods_p,
+                            "_reason_bucket": _reason_order_p,
                         },
                         labels={
                             "period": _period_x_title,
@@ -8170,18 +8333,23 @@ def dashboard_dynamics_of_deviations(df, hide_shared_filters=False):
                         text="_seg_lbl",
                     )
                     _panel_ly = _deviations_dynamics_stacked_bar_layout(
-                        n_periods=_n_per_facet,
+                        n_periods=_n_per_p,
                         period_x_title=_period_x_title,
                         ax_clr=_ax_clr,
                         multi_proj=True,
+                        n_legend_items=_leg_n or len(_reason_order_p) or 1,
                     )
-                    _g_f = _plotly_bargaps_sparse_x_like_gdrs(_n_per_facet)
+                    _g_f = _plotly_bargaps_sparse_x_like_gdrs(_n_per_p)
                     if _g_f:
                         _panel_ly.update(_g_f)
                     fig.update_layout(**_panel_ly)
-                    if _n_per_facet > 18:
+                    if _periods_p:
+                        fig.update_xaxes(
+                            categoryorder="array",
+                            categoryarray=list(_periods_p),
+                        )
+                    if _n_per_p > 18:
                         fig.update_xaxes(ticklabelstep=2)
-                    _deviations_plotly_project_chart_title(fig, _pname)
                     _deviations_stacked_bar_add_totals(
                         fig,
                         _rd_p,
@@ -8207,11 +8375,12 @@ def dashboard_dynamics_of_deviations(df, hide_shared_filters=False):
                             tc = _deviations_contrast_text_on_fill(mc)
                             tr.update(insidetextfont=dict(color=tc, size=10))
                         tr.update(hovertemplate=_hov)
+                    _deviations_dynamics_hide_zero_legend_traces(fig)
                     fig = _plotly_bar_hide_legacy_textfont(fig)
                     fig = apply_chart_background(fig, skip_uniformtext=True)
                     _deviations_dynamics_stacked_bar_finalize(fig, _panel_ly)
-                    # apply_chart_background обнуляет title.text — заголовок с
-                    # названием проекта ставим ПОСЛЕ него.
+                    # apply_chart_background обнуляет title.text — заголовок после finalize,
+                    # без затирания margin.b (см. _deviations_plotly_project_chart_title).
                     _deviations_plotly_project_chart_title(fig, _pname)
                     render_chart(
                         fig,
@@ -8219,6 +8388,15 @@ def dashboard_dynamics_of_deviations(df, hide_shared_filters=False):
                     )
                 fig = None
             else:
+                _leg_n_s = 0
+                if "_reason_bucket" in reason_data.columns and "Количество задач" in reason_data.columns:
+                    _rs_sum_s = (
+                        pd.to_numeric(reason_data["Количество задач"], errors="coerce")
+                        .fillna(0.0)
+                        .groupby(reason_data["_reason_bucket"], observed=False)
+                        .sum()
+                    )
+                    _leg_n_s = int((_rs_sum_s > 0).sum())
                 fig = px.bar(
                     reason_data,
                     x="period",
@@ -8243,6 +8421,7 @@ def dashboard_dynamics_of_deviations(df, hide_shared_filters=False):
                     period_x_title=_period_x_title,
                     ax_clr=_ax_clr,
                     multi_proj=False,
+                    n_legend_items=_leg_n_s or len(_reason_order),
                 )
                 _g_s = _plotly_bargaps_sparse_x_like_gdrs(_n_per_single)
                 if _g_s:
@@ -8298,20 +8477,18 @@ def dashboard_dynamics_of_deviations(df, hide_shared_filters=False):
                         tr.update(insidetextfont=dict(color=tc, size=10))
                     tr.update(hovertemplate=_hover_tpl_single)
 
-                if _single_proj_name:
-                    _deviations_plotly_project_chart_title(fig, _single_proj_name)
                 _deviations_stacked_bar_add_totals(
                     fig,
                     reason_data,
                     period_col="period",
                     value_col="Количество задач",
                 )
+                _deviations_dynamics_hide_zero_legend_traces(fig)
 
                 fig = _plotly_bar_hide_legacy_textfont(fig)
                 fig = apply_chart_background(fig, skip_uniformtext=True)
                 _deviations_dynamics_stacked_bar_finalize(fig, _single_ly)
-                # apply_chart_background обнуляет title.text — заголовок с
-                # названием проекта ставим ПОСЛЕ него.
+                # apply_chart_background обнуляет title.text — заголовок после finalize.
                 if _single_proj_name:
                     _deviations_plotly_project_chart_title(fig, _single_proj_name)
                 _cap_dyn = (
@@ -8497,7 +8674,7 @@ def dashboard_dynamics_of_deviations(df, hide_shared_filters=False):
                 _total_row[col] = ""
         _pm_tbl = pd.concat([_pm_tbl, pd.DataFrame([_total_row])], ignore_index=True)
         suppress_caption(
-            "По последнему MSP-файлу за каждый месяц выгрузки на FTP; "
+            "Актуальный MSP-снимок по каждому проекту; "
             "период — месяц планового окончания задачи."
         )
         _render_html_table(
@@ -8608,20 +8785,36 @@ def dashboard_dynamics_of_deviations(df, hide_shared_filters=False):
                 text="_proj_bar_txt",
                 **_bar_top_kw,
             )
-            # Группировка столбцов: легенда справа, как у «По причинам», чтобы не наезжать на ось X
+            # Группировка столбцов: легенда справа — не наезжает на «Период» / подписи месяцев.
             _n_per_top = int(len(_pd_top_periods) if _pd_top_periods else project_data["period"].nunique(dropna=True) or 0)
-            _top_h = int(max(1280, 840 + min(_n_per_top, 36) * 44))
+            _n_proj_top = int(len(_pd_top_projs) if _pd_top_projs else 1)
+            _top_h = int(max(720, 480 + min(_n_per_top, 36) * 28))
+            _top_r = int(min(280, max(140, 100 + _n_proj_top * 18)))
+            _top_b = int(100 + min(_n_per_top, 14) * 3)
+            _leg_proj = dict(
+                orientation="v",
+                yanchor="top",
+                y=1.0,
+                xanchor="left",
+                x=1.02,
+                bgcolor="rgba(0,0,0,0)",
+                borderwidth=0,
+                tracegroupgap=4,
+                font=dict(size=11),
+                title=dict(text="Проект", font=dict(size=12)),
+            )
             fig.update_layout(
                 barmode="group",
                 bargap=0.16,
                 bargroupgap=0.06,
-                legend=standard_chart_legend(title=dict(text="Проект"), font=dict(size=12)),
-                margin=dict(l=56, r=240, t=36, b=240),
+                showlegend=True,
+                legend=_leg_proj,
+                margin=dict(l=56, r=_top_r, t=36, b=_top_b),
                 xaxis=dict(
-                    title=dict(text="Период", standoff=48, font=dict(size=13, color=_ax_clr)),
+                    title=dict(text="Период", standoff=14, font=dict(size=13, color=_ax_clr)),
                     tickangle=-45,
                     tickfont=dict(size=12, color=_ax_clr),
-                    automargin=True,
+                    automargin=False,
                 ),
                 yaxis=dict(
                     title=dict(
@@ -8645,7 +8838,7 @@ def dashboard_dynamics_of_deviations(df, hide_shared_filters=False):
                 _lo, _hi = float(_vy.min()), float(_vy.max())
                 _p95 = float(_vy.quantile(0.95))
                 if _hi > 0 and _hi > max(_p95 * 2.5, abs(_lo) * 4.0, 120.0) and _p95 > 0:
-                    _cap = max(_p95 * 1.15, abs(_lo) if _lo != 0 else _p95 * 1.15)
+                    _cap = max(_p95 * 1.15, abs(_lo) if _lo < 0 else _p95 * 1.15)
                     _y0 = _lo if _lo < 0 else 0.0
                     fig.update_yaxes(range=[_y0, _cap], autorange=False)
             fig.update_traces(
@@ -8655,6 +8848,12 @@ def dashboard_dynamics_of_deviations(df, hide_shared_filters=False):
             )
             _plotly_bar_hide_legacy_textfont(fig)
             fig = apply_chart_background(fig, skip_uniformtext=True)
+            # apply_chart_background снова ставит легенду снизу — возвращаем справа.
+            fig.update_layout(
+                showlegend=True,
+                legend=_leg_proj,
+                margin=dict(l=56, r=_top_r, t=36, b=_top_b),
+            )
             render_chart(
                 fig,
                 caption_below=_dynamics_caption(
