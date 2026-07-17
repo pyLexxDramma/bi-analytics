@@ -3958,12 +3958,10 @@ def _gdrs_pie_contractors_figure(pie_df: pd.DataFrame, *, theme: str = "dark") -
     _has_outside = False
     slice_text: list[str] = []
     slice_pos: list[str] = []
-    slice_pull: list[float] = []
     for val in values:
         if total_v <= 0:
             slice_text.append("")
             slice_pos.append("inside")
-            slice_pull.append(0.0)
             continue
         frac = float(val) / total_v
         pct_txt = f"{frac * 100:.1f}%" if 0 < frac < 0.03 else f"{frac * 100:.0f}%"
@@ -3971,11 +3969,9 @@ def _gdrs_pie_contractors_figure(pie_df: pd.DataFrame, *, theme: str = "dark") -
             abs_txt = f"{int(round(val))}"
             slice_text.append(f"{abs_txt}<br>{pct_txt}")
             slice_pos.append("inside")
-            slice_pull.append(0.0)
         else:
             slice_text.append(pct_txt)
             slice_pos.append("outside")
-            slice_pull.append(0.05 if frac < 0.03 else 0.03)
             _has_outside = True
     _labels = df["Контрагент"].astype(str).tolist()
     _ui_scale = 1.5
@@ -3990,9 +3986,8 @@ def _gdrs_pie_contractors_figure(pie_df: pd.DataFrame, *, theme: str = "dark") -
         outside_labels=_has_outside,
     )
     _legend_h = int(_pie_layout["margin_bottom"])
-    # Адаптивная ширина: donut в Plotly всегда вписывается в меньшую сторону домена и
-    # остаётся идеально круглым. Домен задаём долями; высоту фиксируем, ширина тянется
-    # на весь блок (как на других диаграммах) → круг центрируется, панель кнопок штатная.
+    # Высота фиксирована; ширина — на весь блок (use_container_width). Donut Plotly
+    # всегда круглый (вписывается в min сторону домена). pull=0 — без щели на стыке.
     _top_pad = int(_txt_out * 2.2)
     _gap = int(_txt_out * 0.6)
     _circle = 780
@@ -4014,7 +4009,7 @@ def _gdrs_pie_contractors_figure(pie_df: pd.DataFrame, *, theme: str = "dark") -
                 textinfo="text",
                 textposition=slice_pos,
                 insidetextorientation="horizontal",
-                pull=slice_pull,
+                pull=0,
                 textfont=dict(size=_txt_in, color=_th.pie_text_in),
                 outsidetextfont=dict(size=_txt_out, color=_th.pie_text_out),
                 hovertemplate=(
@@ -4036,9 +4031,6 @@ def _gdrs_pie_contractors_figure(pie_df: pd.DataFrame, *, theme: str = "dark") -
     from dashboards.gdrs_theme import apply_gdrs_chart_background
 
     fig = apply_gdrs_chart_background(fig, _th, skip_uniformtext=True)
-    # Форсируем точную геометрию после apply_gdrs_chart_background (иначе он ставит
-    # свои дефолтные margin/legend). Ширину не фиксируем — use_container_width тянет
-    # фигуру на весь блок, круг центрируется по домену x=[0.08,0.92].
     fig.update_layout(
         height=_fig_h,
         autosize=True,
@@ -4059,6 +4051,7 @@ def _gdrs_pie_contractors_figure(pie_df: pd.DataFrame, *, theme: str = "dark") -
         selector=dict(type="pie"),
         domain=dict(x=list(_dx), y=list(_dy)),
         automargin=False,
+        pull=0,
     )
     return fig
 
@@ -27346,7 +27339,13 @@ def _gdrs_contractors_summary_display(chart_df: pd.DataFrame) -> pd.DataFrame:
 
 
 def _gdrs_pie_distribution_display(pie_df: pd.DataFrame) -> pd.DataFrame:
-    d = pie_df.sort_values("Факт", ascending=False).copy()
+    """Таблица распределения: сортировка по плану; доля — от суммы факта."""
+    sort_cols = [c for c in ("План", "Факт") if c in pie_df.columns]
+    d = (
+        pie_df.sort_values(sort_cols, ascending=False).copy()
+        if sort_cols
+        else pie_df.copy()
+    )
     total = float(pd.to_numeric(d["Факт"], errors="coerce").fillna(0).sum())
     out = pd.DataFrame({
         "Контрагент": d["Контрагент"].astype(str),
@@ -27387,18 +27386,20 @@ def _gdrs_render_contractors_pie_block(
     if _pie_full_n > 10:
         st.caption(
             "Диаграмма: топ-10 контрагентов по факту; остальные объединены в «Прочие». "
-            "Полный список — в таблице «Распределение …» ниже на странице."
+            "Полный список (план или факт) — в таблице «Распределение …» ниже на странице."
         )
     try:
         fig3 = _gdrs_pie_contractors_figure(_pie_chart_df, theme=theme)
-        # Как на других диаграммах: нативный st.plotly_chart на всю ширину блока —
-        # штатная панель кнопок и центрирование. Круг остаётся ровным (donut вписан
-        # в меньшую сторону домена).
+        fig3 = _ensure_pie_full_modebar(fig3)
+        _inject_pie_modebar_zoom_sync()
+        # На всю ширину блока (как bar). Круг ровный: без pull; Plotly вписывает
+        # donut в min(domain) при responsive. Полный modebar — как у остальных графиков.
         _gdrs_st_plotly_chart(
             st,
             fig3,
             key=f"gdrs_pie_{key_suffix}" if key_suffix else "gdrs_pie",
             use_container_width=True,
+            config=_PLOTLY_CONFIG_FULL_MODEBAR,
         )
     except Exception as _e:
         st.warning(f"Plotly недоступен: {_e}")
@@ -27492,13 +27493,12 @@ def _gdrs_append_summary_total_row(df: pd.DataFrame) -> pd.DataFrame:
 
 
 def _gdrs_render_pie_chart(st, fig, *, width_px: int, height_px: int, theme: Any, key: str) -> None:
-    """Круговая ГДРС: фиксированные пропорции, без responsive-растягивания Streamlit."""
+    """Круговая ГДРС: блок 100% ширины, круг с фикс. px по центру (без CSS-растяжения)."""
     import uuid as _uuid
 
     w = int(max(width_px, 320))
     h = int(max(height_px, 320))
-    cfg = dict(_PLOTLY_CONFIG)
-    cfg["responsive"] = False
+    cfg = {**_PLOTLY_CONFIG_FULL_MODEBAR, "responsive": False}
     try:
         fig.update_layout(width=w, height=h, autosize=False)
     except Exception:
@@ -27540,8 +27540,8 @@ def _gdrs_render_pie_chart(st, fig, *, width_px: int, height_px: int, theme: Any
             st,
             fig,
             key=key,
-            use_container_width=False,
-            config={"responsive": False},
+            use_container_width=True,
+            config=_PLOTLY_CONFIG_FULL_MODEBAR,
         )
 
 
@@ -28555,13 +28555,18 @@ def dashboard_gdrs(df, vid_locked: str | None = None, *, theme: str | None = Non
         )
 
     st.markdown("---")
-    pie_source = chart_df[chart_df["Факт"] > 0].copy()
-    if pie_source.empty:
-        st.info("Нет фактических данных для таблицы распределения.")
+    # Полный список: план или факт (не только Факт>0 — иначе пропадают plan-only,
+    # заказчик: при «все проекты» ожидает ~39, а не ~18 с фактом).
+    _dist_src = chart_df[
+        (pd.to_numeric(chart_df["План"], errors="coerce").fillna(0) > 0)
+        | (pd.to_numeric(chart_df["Факт"], errors="coerce").fillna(0) > 0)
+    ].copy()
+    if _dist_src.empty:
+        st.info("Нет данных для таблицы распределения.")
     else:
         _gdrs_render_plan_fact_summary_table(
             st,
-            _gdrs_pie_distribution_display(pie_source),
+            _gdrs_pie_distribution_display(_dist_src),
             table_title=f"Распределение {_unit_gen} по контрагентам",
             theme=theme,
         )

@@ -4233,16 +4233,17 @@ def build_main_table(
         contractors=contractors,
     )
     fact = gdrs_filter_fact_by_termination(fact, term_index)
-    fact = gdrs_drop_excluded_contractors(fact)
     fact = _gdrs_add_pair_keys(fact, kontr_index, dedupe_fact=True)
+    # После Kontr: каноническое имя может появиться только здесь — стоп-лист по contractor_name.
+    fact = gdrs_drop_excluded_contractors(fact)
 
     plan_work = plan.copy() if plan is not None and not plan.empty else pd.DataFrame()
     if not plan_work.empty:
-        plan_work = gdrs_drop_excluded_contractors(plan_work)
         plan_work = _gdrs_add_pair_keys(plan_work, kontr_index, dedupe_fact=False)
+        plan_work = gdrs_drop_excluded_contractors(plan_work)
 
     plan_col = "plan_workers" if vid.casefold() == "рабочие" else "plan_equipment"
-    by_id, by_id_name, by_norm = _build_plan_lookup(plan_work if not plan_work.empty else plan, plan_col)
+    by_id, by_id_name, by_norm = _build_plan_lookup(plan_work, plan_col)
     _plan_snap = pd.Timestamp(plan_as_of).normalize() if plan_as_of is not None and pd.notna(plan_as_of) else (
         pd.Timestamp(date_to).normalize() if date_to is not None and pd.notna(date_to) else None
     )
@@ -4297,7 +4298,7 @@ def build_main_table(
             pivot[col] = []
     pivot.rename(columns={1: "w1", 2: "w2", 3: "w3", 4: "w4", 5: "w5", 6: "w6"}, inplace=True)
 
-    plan_pairs_df = _filter_plan_slice(plan_work if not plan_work.empty else plan, projects, contractors)
+    plan_pairs_df = _filter_plan_slice(plan_work, projects, contractors)
     if plan_pairs_df is not None and not plan_pairs_df.empty:
         plan_pairs_df = plan_pairs_df.copy()
         if "_gk_proj" not in plan_pairs_df.columns:
@@ -4391,9 +4392,8 @@ def build_main_table(
         for _per in pd.period_range(_plo.to_period("M"), _phi.to_period("M"), freq="M"):
             _snap = pd.Timestamp(min(_phi, _per.end_time.normalize())).normalize()
             if _snap not in _month_plan_lu_cache:
-                _month_plan_lu_cache[_snap] = _build_plan_lookup(
-                    plan_aggregate_loader(_snap), plan_col
-                )
+                _pdf = gdrs_drop_excluded_contractors(plan_aggregate_loader(_snap))
+                _month_plan_lu_cache[_snap] = _build_plan_lookup(_pdf, plan_col)
 
     if _use_period_plan_avg:
         rows["plan"] = rows.apply(
@@ -4520,6 +4520,7 @@ def build_main_table(
         term_index=term_index,
         plan_as_of=_plan_snap,
     )
+    rows = gdrs_drop_excluded_contractors(rows)
 
     if only_with_plan:
         rows = rows[rows["plan"] > 0].copy()
@@ -5270,11 +5271,12 @@ def _gdrs_cached_plan_aggregate(
     snap = pd.Timestamp(snapshot_iso) if snapshot_iso else None
     dog = json_records_by_source(int(version_id), "dogovor_json")
     spr = json_records_by_source(int(version_id), "spravochniki_json")
-    return load_plan_aggregate(
+    plan_df = load_plan_aggregate(
         dogovor_records=dog,
         sprav_records=spr,
         snapshot_date=snap,
     )
+    return gdrs_drop_excluded_contractors(plan_df)
 
 
 @st.cache_data(show_spinner=False, ttl=3600)
