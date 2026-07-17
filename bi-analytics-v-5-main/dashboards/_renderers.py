@@ -3861,13 +3861,27 @@ def _clamp_plotly_scroll_zoom_padding(fig: go.Figure) -> None:
             continue
         orient = getattr(tr, "orientation", None) or "v"
         if orient == "h":
+            _base_arr = getattr(tr, "base", None)
+            _has_dt_base = False
+            if _base_arr is not None:
+                for _b in list(_base_arr):
+                    if isinstance(_b, (pd.Timestamp, datetime)):
+                        _has_dt_base = True
+                        break
             for arr in (getattr(tr, "x", None), getattr(tr, "base", None)):
                 if arr is None:
                     continue
                 for raw in list(arr):
+                    if isinstance(raw, (pd.Timestamp, datetime)):
+                        ts = pd.Timestamp(raw)
+                        if pd.notna(ts):
+                            date_points.append(ts)
+                        continue
                     try:
                         v = float(raw)
                     except (TypeError, ValueError):
+                        continue
+                    if _has_dt_base and v < 1e11:
                         continue
                     if v >= 1e11:
                         ts = pd.Timestamp(v, unit="ms")
@@ -17402,15 +17416,11 @@ def _rd_plan_db_contract_lookup(
     name_c = pc.get("name")
     fc_c = pc.get("full_cipher")
     for _i, row in secs.iterrows():
-        contract = (
-            row["_plan_dt"].strftime("%d.%m.%Y")
-            if "_plan_dt" in secs.columns and pd.notna(row.get("_plan_dt"))
-            else ""
+        contract = _rd_format_chart_date_cell(
+            row["_plan_dt"] if "_plan_dt" in secs.columns and pd.notna(row.get("_plan_dt")) else ""
         )
-        forecast = (
-            row["_fact_dt"].strftime("%d.%m.%Y")
-            if "_fact_dt" in secs.columns and pd.notna(row.get("_fact_dt"))
-            else ""
+        forecast = _rd_format_chart_date_cell(
+            row["_fact_dt"] if "_fact_dt" in secs.columns and pd.notna(row.get("_fact_dt")) else ""
         )
         if not contract and not forecast:
             continue
@@ -17904,6 +17914,31 @@ def _rd_status_filter_expand(labels: set[str] | list[str]) -> set[str]:
             frozenset({"выдано в производство работ", "направлен в производство работ"}),
         ),
         (
+            "на рассмотрении у гип",
+            frozenset(
+                {
+                    "на рассмотрении у гип",
+                    "на рассмотрение у гип",
+                    "на рассмотрении",
+                }
+            ),
+        ),
+        (
+            "возвращено на доработку",
+            frozenset(
+                {
+                    "возвращено на доработку",
+                    "возвращен на доработку",
+                    "на доработке",
+                    "возвр.",
+                }
+            ),
+        ),
+        (
+            "не выдано",
+            frozenset({"не выдано", "не выдан"}),
+        ),
+        (
             "передано подрядчику",
             frozenset(
                 {
@@ -18095,7 +18130,7 @@ def _build_rd_work_doc_detail_table(
     selected_section: str | None = None,
 ) -> pd.DataFrame:
     """
-    Детальная таблица РД: карточки TESSA + разделы из other_*_rd.csv без карточки («Не выдан»).
+    Детальная таблица РД: карточки TESSA + разделы из other_*_rd.csv без карточки («Не выдано»).
     """
     tessa_tbl = _build_tessa_rd_detail_table(
         selected_projects=selected_projects,
@@ -18176,7 +18211,7 @@ def _build_rd_work_doc_detail_table(
                 "Шифр": cipher,
                 "Шифр полный": full_c,
                 "Версия": "",
-                "Статус": "Не выдан",
+                "Статус": _RD_TESSA_STATUS_NOT_ISSUED,
                 "Дата выдачи разделов по Договору": plan_s,
                 "Прогнозная дата выдачи разделов": fc_s if fc_s != "—" else "",
                 "Дата загрузки раздела генпроектировщиком": "",
@@ -18438,8 +18473,11 @@ _RD_PIE_STATUS_COLORS: dict[str, str] = {
     "Отказ": "#C0392B",
     "Не принято": "#C0392B",
     "Снято": "#7F8C8D",
-    "Не выдан": "#7F8C8D",
-    "Выдано в производство работ": "#2980B9",
+    "Не выдан": "#F5A9C0",
+    "Не выдано": "#F5A9C0",
+    "Выдано в производство работ": "#27AE60",
+    "На рассмотрении у ГИП": "#F1C40F",
+    "Возвращено на доработку": "#C0392B",
     "Передано подрядчику": "#8E44AD",
     "Выдано подрядчику": "#8E44AD",
     "На рассмотрении": "#F1C40F",
@@ -18470,12 +18508,13 @@ def _rd_status_is_excluded(label: object) -> bool:
 def _rd_normalize_pie_status_label(raw: object) -> str:
     """Подпись сегмента пирога = подпись в фильтре «Статус» (без N/A и сокращений)."""
     if raw is None or (isinstance(raw, float) and pd.isna(raw)):
-        return "Не выдан"
+        return _RD_TESSA_STATUS_NOT_ISSUED
+    canon = _rd_canonical_tessa_rd_status(raw)
+    if canon:
+        return canon
     s = str(raw).strip()
     if not s or s.casefold() in ("nan", "none", "<na>", "nat", "n/a"):
-        return "Не выдан"
-    if s.casefold() in ("не выдано", "не выдан"):
-        return "Не выдан"
+        return _RD_TESSA_STATUS_NOT_ISSUED
     _legacy_short = {
         "принято": "Согласован",
         "на рассм.": "На согласовании",
@@ -18505,7 +18544,13 @@ def _rd_plan_map_status_label_from_detail(
         return out
     ordered = detail_tbl.copy()
     if "Статус" in ordered.columns:
-        ordered["_nv"] = ordered["Статус"].astype(str).str.strip().eq("Не выдан")
+        ordered["_nv"] = (
+            ordered["Статус"]
+            .astype(str)
+            .str.strip()
+            .str.casefold()
+            .isin({"не выдан", "не выдано"})
+        )
         ordered = ordered.sort_values("_nv", kind="stable")
     status_by_fc: dict[str, str] = {}
     status_by_pcn: dict[tuple[str, str, str], str] = {}
@@ -18514,7 +18559,7 @@ def _rd_plan_map_status_label_from_detail(
         st_raw = str(r.get("Статус", "") or "").strip()
         if not st_raw or st_raw.casefold() in ("nan", "none"):
             continue
-        label = "Не выдан" if st_raw == "Не выдан" else _rd_normalize_pie_status_label(st_raw)
+        label = _rd_normalize_pie_status_label(st_raw)
         fc = str(r.get("Шифр полный", "") or "").strip().casefold()
         if fc and fc not in ("nan", "none"):
             status_by_fc[fc] = label
@@ -18637,17 +18682,26 @@ def _rd_plan_map_buckets_from_detail(
         return out
     ordered = detail_tbl.copy()
     if "Статус" in ordered.columns:
-        ordered["_nv"] = ordered["Статус"].astype(str).str.strip().eq("Не выдан")
+        ordered["_nv"] = (
+            ordered["Статус"]
+            .astype(str)
+            .str.strip()
+            .str.casefold()
+            .isin({"не выдан", "не выдано"})
+        )
         ordered = ordered.sort_values("_nv", kind="stable")
     status_by_fc: dict[str, str] = {}
     status_by_pcn: dict[tuple[str, str, str], str] = {}
     status_by_pc: dict[tuple[str, str], str] = {}
     for _, r in ordered.iterrows():
         st_raw = r.get("Статус", "")
-        if str(st_raw).strip().casefold() in ("не выдан", "не выдано"):
-            bucket = "Не выдано"
+        canon = _rd_canonical_tessa_rd_status(st_raw)
+        if canon:
+            bucket = canon
+        elif str(st_raw).strip().casefold() in ("не выдан", "не выдано"):
+            bucket = _RD_TESSA_STATUS_NOT_ISSUED
         else:
-            # «Статус» детали теперь = категория «как на круговой»; если это не
+            # «Статус» детали = категория «как на круговой»; если это не
             # KrState-метка — используем её саму как сегмент пирога.
             bucket = _tessa_krstate_to_pie_bucket(st_raw) or str(st_raw).strip()
         if not bucket:
@@ -18696,6 +18750,138 @@ def _rd_plan_proj_section_counts(
         .astype(int)
         .to_dict()
     )
+
+
+_RD_DETAIL_DATE_ALIASES: dict[str, tuple[str, ...]] = {
+    "Дата выдачи разделов по Договору": (
+        "Дата выдачи по договору",
+        "План выдачи (по Договору)",
+    ),
+    "Прогнозная дата выдачи разделов": (
+        "Прогнозная дата выдачи",
+        "Прогноз/Факт выдачи",
+    ),
+    "Шифр": ("Шифр раздела",),
+    "Наименование разделов работ": ("Наименование", "Наименование раздела"),
+}
+
+
+def _rd_parse_chart_date_cell(v) -> pd.Timestamp:
+    if v is None or (isinstance(v, float) and pd.isna(v)):
+        return pd.NaT
+    if isinstance(v, pd.Timestamp):
+        return v.normalize() if pd.notna(v) else pd.NaT
+    s = str(v).strip()
+    if not s or s.casefold() in ("—", "-", "nan", "none", "<na>", "nat"):
+        return pd.NaT
+    if "/" in s:
+        parts = [p.strip() for p in s.split("/") if p.strip()]
+        dts: list[pd.Timestamp] = []
+        for p in parts:
+            dt = pd.to_datetime(p, errors="coerce", dayfirst=True, format="mixed")
+            if pd.notna(dt):
+                dts.append(pd.Timestamp(dt).normalize())
+        return max(dts) if dts else pd.NaT
+    dt = pd.to_datetime(s, errors="coerce", dayfirst=True, format="mixed")
+    return pd.Timestamp(dt).normalize() if pd.notna(dt) else pd.NaT
+
+
+def _rd_format_chart_date_cell(v) -> str:
+    ts = _rd_parse_chart_date_cell(v)
+    return ts.strftime("%d.%m.%Y") if pd.notna(ts) else ""
+
+
+def _rd_delay_normalize_detail_columns(tbl: pd.DataFrame) -> pd.DataFrame:
+    if tbl is None or getattr(tbl, "empty", True):
+        return tbl
+    out = tbl.copy()
+    for canon, alts in _RD_DETAIL_DATE_ALIASES.items():
+        if canon in out.columns:
+            continue
+        for alt in alts:
+            if alt in out.columns:
+                out[canon] = out[alt]
+                break
+    return out
+
+
+def _rd_delay_enrich_detail_from_plan(
+    detail_tbl: pd.DataFrame,
+    plan_sec_df: pd.DataFrame | None,
+    plan_proj_col: str | None,
+) -> pd.DataFrame:
+    out = _rd_delay_normalize_detail_columns(detail_tbl)
+    if (
+        out is None
+        or getattr(out, "empty", True)
+        or plan_sec_df is None
+        or getattr(plan_sec_df, "empty", True)
+    ):
+        return out
+    contract_c = "Дата выдачи разделов по Договору"
+    forecast_c = "Прогнозная дата выдачи разделов"
+    pc = _rd_plan_csv_pick_columns(plan_sec_df)
+    code_c = pc.get("code")
+    name_c = pc.get("name")
+    proj_c = plan_proj_col or pc.get("proj")
+    plan_dt_s = (
+        plan_sec_df["_plan_dt"]
+        if "_plan_dt" in plan_sec_df.columns
+        else pd.Series(pd.NaT, index=plan_sec_df.index)
+    )
+    fact_dt_s = (
+        plan_sec_df["_fact_dt"]
+        if "_fact_dt" in plan_sec_df.columns
+        else pd.Series(pd.NaT, index=plan_sec_df.index)
+    )
+    if pc.get("plan") and pc["plan"] in plan_sec_df.columns and plan_dt_s.isna().all():
+        plan_dt_s = pd.to_datetime(
+            plan_sec_df[pc["plan"]], errors="coerce", dayfirst=True, format="mixed"
+        )
+    if pc.get("forecast") and pc["forecast"] in plan_sec_df.columns and fact_dt_s.isna().all():
+        fact_dt_s = pd.to_datetime(
+            plan_sec_df[pc["forecast"]], errors="coerce", dayfirst=True, format="mixed"
+        )
+    lookup: dict[tuple[str, str, str], tuple[str, str]] = {}
+    for _i, row in plan_sec_df.iterrows():
+        pk = _project_filter_norm_key(row.get(proj_c, "")) if proj_c else ""
+        cc = _rd_csv_cell_str(row.get(code_c, "")).casefold() if code_c else ""
+        nn = _rd_csv_cell_str(row.get(name_c, "")).casefold() if name_c else ""
+        contract = (
+            _rd_format_chart_date_cell(plan_dt_s.loc[_i])
+            if _i in plan_dt_s.index and pd.notna(plan_dt_s.loc[_i])
+            else ""
+        )
+        forecast = (
+            _rd_format_chart_date_cell(fact_dt_s.loc[_i])
+            if _i in fact_dt_s.index and pd.notna(fact_dt_s.loc[_i])
+            else ""
+        )
+        if not contract and not forecast:
+            continue
+        lookup[(pk, cc, nn)] = (contract, forecast)
+        if cc:
+            lookup.setdefault((pk, cc, ""), (contract, forecast))
+    if not lookup:
+        return out
+    _empty = {"", "—", "-", "nan", "none", "<na>", "nat"}
+
+    def _needs_fill(val) -> bool:
+        return str(val or "").strip().casefold() in _empty
+
+    for idx, row in out.iterrows():
+        pk = _project_filter_norm_key(row.get("Проект", ""))
+        cc = str(row.get("Шифр", "") or "").strip().casefold()
+        nn = str(row.get("Наименование разделов работ", "") or "").strip().casefold()
+        entry = lookup.get((pk, cc, nn)) or lookup.get((pk, cc, ""))
+        if not entry:
+            continue
+        contract, forecast = entry
+        if contract_c in out.columns and _needs_fill(out.at[idx, contract_c]):
+            out.at[idx, contract_c] = contract
+        if forecast_c in out.columns and _needs_fill(out.at[idx, forecast_c]):
+            out.at[idx, forecast_c] = forecast
+    return out
 
 
 def _rd_delay_chart_segments(
@@ -18769,22 +18955,39 @@ def _rd_delay_build_date_rows(
     *,
     by_section: bool,
     ts_report: pd.Timestamp,
+    show_forecast: bool = True,
 ) -> tuple[pd.DataFrame, str]:
     """Строки для Gantt просрочки РД (схема ПД): дата по договору (жёлтый),
     прогнозная дата (зелёный/красный), зелёный — если все задачи «Завершено»."""
     contract_c = "Дата выдачи разделов по Договору"
     forecast_c = "Прогнозная дата выдачи разделов"
-    work = tbl.copy()
-    work["_contract_dt"] = pd.to_datetime(
-        work.get(contract_c), errors="coerce", dayfirst=True
+    work = _rd_delay_normalize_detail_columns(tbl.copy())
+    work["_contract_dt"] = work.get(contract_c, pd.Series(index=work.index)).map(
+        _rd_parse_chart_date_cell
     )
-    work["_forecast_dt"] = pd.to_datetime(
-        work.get(forecast_c), errors="coerce", dayfirst=True
+    work["_forecast_dt"] = work.get(forecast_c, pd.Series(index=work.index)).map(
+        _rd_parse_chart_date_cell
     )
-    if "_rd_done" in work.columns:
-        work["_done_flag"] = work["_rd_done"].fillna(False).astype(bool)
+    _prod_col = "Дата выдачи в производство работ"
+    if _prod_col in work.columns:
+        work["_production_dt"] = work[_prod_col].map(_rd_parse_chart_date_cell)
     else:
-        work["_done_flag"] = False
+        work["_production_dt"] = pd.NaT
+    if "_rd_done" in work.columns:
+        _archive_done = work["_rd_done"].fillna(False).astype(bool)
+    else:
+        _archive_done = pd.Series(False, index=work.index)
+    if "Статус" in work.columns:
+        _st_cf = work["Статус"].fillna("").astype(str).str.strip().str.casefold()
+        _status_done = _st_cf.eq("выдано в производство работ") | _st_cf.eq(
+            "завершено"
+        )
+    else:
+        _status_done = pd.Series(False, index=work.index)
+    # Зелёный: «Завершено» (архив TESSA) / выдано в производство / есть дата выдачи.
+    work["_done_flag"] = (
+        _archive_done | _status_done | work["_production_dt"].notna()
+    )
     if by_section:
         work["_y"] = (
             work["Шифр"].fillna("").astype(str).str.strip()
@@ -18826,12 +19029,22 @@ def _rd_delay_build_date_rows(
             continue
         # По проекту/разделу: конец жёлтого = последнее «по договору» (как max БО у ПД).
         contract_n = pd.Timestamp(_contracts.max()).normalize()
-        _forecasts = grp["_forecast_dt"].dropna()
-        forecast_n = (
-            pd.Timestamp(_forecasts.max()).normalize() if not _forecasts.empty else None
-        )
-        # Завершено — если все карточки раздела/проекта завершены.
-        done = bool(grp["_done_flag"].all()) and len(grp) > 0
+        # Несколько версий TESSA на один шифр: «не выдан» у старых версий не должен
+        # блокировать зелёный, если есть завершённая/выданная карточка.
+        _done_grp = grp.loc[grp["_done_flag"]]
+        done = not _done_grp.empty
+        forecast_n = None
+        if show_forecast:
+            _src = _done_grp if done else grp
+            _prod = _src["_production_dt"].dropna()
+            if not _prod.empty:
+                forecast_n = pd.Timestamp(_prod.max()).normalize()
+            else:
+                _forecasts = _src["_forecast_dt"].dropna()
+                if _forecasts.empty and done:
+                    _forecasts = grp["_forecast_dt"].dropna()
+                if not _forecasts.empty:
+                    forecast_n = pd.Timestamp(_forecasts.max()).normalize()
         seg = _rd_delay_chart_segments(
             _start,
             contract_n,
@@ -18848,6 +19061,7 @@ def _render_rd_delay_fallback_chart(
     view_mode: str,
     doc_code: str,
     metric_mode: str = "Количество разделов",
+    show_forecast: bool = True,
     plan_sec_df: pd.DataFrame | None = None,
     plan_proj_col: str | None = None,
 ) -> None:
@@ -18857,17 +19071,27 @@ def _render_rd_delay_fallback_chart(
     if detail_tbl is None or getattr(detail_tbl, "empty", True):
         st.info("Нет данных для графика просрочки.")
         return
-    _tbl_g = _drop_rd_detail_empty_rows(detail_tbl.copy())
-    if (
+    # Основной график — всегда date-Gantt (как на ТЗ). «% от общего объёма»
+    # влияет на помесячную динамику, не подменяет Gantt столбчатым.
+    _tbl_g = _rd_delay_enrich_detail_from_plan(
+        _drop_rd_detail_empty_rows(detail_tbl.copy()),
+        plan_sec_df,
+        plan_proj_col,
+    )
+    _gantt_ok = (
         not _tbl_g.empty
         and "Дата выдачи разделов по Договору" in _tbl_g.columns
         and "Шифр" in _tbl_g.columns
         and "Наименование разделов работ" in _tbl_g.columns
-    ):
+    )
+    if _gantt_ok:
         by_section = str(view_mode or "").strip().casefold() == "по разделу"
         ts_report = pd.Timestamp.today().normalize()
         _rows, _y_col = _rd_delay_build_date_rows(
-            _tbl_g, by_section=by_section, ts_report=ts_report
+            _tbl_g,
+            by_section=by_section,
+            ts_report=ts_report,
+            show_forecast=show_forecast,
         )
         if not _rows.empty:
             _rows = _rows.rename(columns={_y_col: "_rd_chart_y"})
@@ -18878,8 +19102,17 @@ def _render_rd_delay_fallback_chart(
                 green_name="Прогнозная дата",
                 yellow_hover="Дата по договору",
                 green_hover="Прогнозная дата выдачи",
+                show_forecast=show_forecast,
             )
-            _render_pd_delay_duration_chart(fig, f"Просрочка выдачи {doc_code}")
+            # Ключ зависит от checkbox/режима — иначе Streamlit кэширует старый fig.
+            _ck = (
+                f"rd_delay_gantt_{doc_code}_"
+                f"{'fc1' if show_forecast else 'fc0'}_"
+                f"{'sec' if by_section else 'proj'}"
+            )
+            _render_pd_delay_duration_chart(
+                fig, f"Просрочка выдачи {doc_code}", chart_key=_ck
+            )
             return
     _render_rd_delay_overdue_bar_chart(
         detail_tbl,
@@ -19302,8 +19535,12 @@ def _rd_plan_fallback_view(
         {s for s in _src_status_labels if not _rd_status_is_excluded(s)},
         key=lambda x: x.casefold(),
     )
-    if source_key == "rd_plan_data" and "Не выдан" not in stat_vals:
-        stat_vals = sorted(stat_vals + ["Не выдан"], key=lambda x: x.casefold())
+    if source_key == "rd_plan_data" and _RD_TESSA_STATUS_NOT_ISSUED not in stat_vals:
+        if "Не выдан" in stat_vals:
+            stat_vals = [s for s in stat_vals if s != "Не выдан"]
+        stat_vals = sorted(
+            stat_vals + [_RD_TESSA_STATUS_NOT_ISSUED], key=lambda x: x.casefold()
+        )
 
     f2a, f2b, f2c = st.columns(3, gap="small")
     with f2a:
@@ -19427,7 +19664,10 @@ def _rd_plan_fallback_view(
         elif status_col and status_col in df.columns:
             _st_lbl = _rd_plan_status_display_series(df[status_col]).astype(str).str.strip()
             _mask = _st_lbl.map(lambda x: _rd_status_label_matches_filter(x, _sel_st_expanded))
-            if "Не выдан" in sel_st:
+            _sel_not_issued = bool(
+                {"Не выдан", _RD_TESSA_STATUS_NOT_ISSUED} & set(sel_st)
+            )
+            if _sel_not_issued:
                 _sel_proj = list(sel) if proj_col and sel else None
                 _internal_ids = _rd_plan_tessa_internal_ids(_sel_proj)
                 _fc_col = _pc_fb.get("full_cipher")
@@ -19438,7 +19678,7 @@ def _rd_plan_fallback_view(
                     _nv = df["_tessa_production_dt"].isna()
                 else:
                     _nv = df["_fact_dt"].isna()
-                if set(sel_st) == {"Не выдан"}:
+                if set(sel_st) <= {"Не выдан", _RD_TESSA_STATUS_NOT_ISSUED}:
                     _mask = _nv.fillna(False)
                 else:
                     _mask = _mask | _nv.fillna(False)
@@ -19614,9 +19854,34 @@ def _rd_plan_fallback_view(
                 view_mode=fb_delay_view_mode,
                 doc_code=doc_code,
                 metric_mode=fb_metric_mode,
+                show_forecast=fb_show_forecast,
                 plan_sec_df=df,
                 plan_proj_col=proj_col,
             )
+            try:
+                month_df_fb = df[df["_plan_dt"].notna()].copy()
+                if (
+                    not month_df_fb.empty
+                    and "_rd_plan_n" in month_df_fb.columns
+                    and "_rd_fact_n" in month_df_fb.columns
+                ):
+                    month_df_fb["_plan_end_dt"] = month_df_fb["_plan_dt"]
+                    monthly_fb = _rd_monthly_sections_aggregate(month_df_fb)
+                    if not monthly_fb.empty:
+                        _render_rd_monthly_overlay_chart(
+                            monthly_fb,
+                            metric_mode=fb_metric_mode,
+                            orientation="h",
+                            subheader=(
+                                "Динамика по месяцам (% по плану)"
+                                if str(fb_metric_mode).strip().startswith("%")
+                                else "Динамика по месяцам"
+                            ),
+                            chart_key=f"rdfb_delay_months_{fb_k}",
+                            caption_parts=("Выдача рабочей документации", "по месяцам"),
+                        )
+            except Exception:
+                pass
         else:
             st.info(
                 "Для графика просрочки нужны карточки TESSA (`tessa_*_rd.csv`) "
@@ -19632,15 +19897,8 @@ def _rd_plan_fallback_view(
             _full_cipher_pie = _pick(
                 ["Шифр полный", "InternalID", "Internal Id", "internalid"]
             )
-            # ТЗ (Исполнение РД): 100% = разделы из other_*_rd.csv; доли по задачам
-            # TESSA — «Выдано в производство работ» (Подписан+ГИП, зелёный),
-            # «На рассмотрении у ГИП» (Подписан+Проектировщик, жёлтый),
-            # «Возвращено на доработку» (Отказ/Отмена, красный), остаток
-            # «Не выдано» (розовый).
-            # Метки TESSA (DivisionCipher + SubDivisionVersionName, напр. «АС
-            # Первая версия») не совпадают с метками плана (Шифр + Наименование),
-            # поэтому section_labels_allowlist обнулил бы выборку. Фильтр проектов
-            # уже ограничивает карточки нужным объектом — allowlist не передаём.
+            # Исполнение РД: 100% = разделы other_*_rd.csv; доли из Status
+            # tessa_*_rd.csv (три значения); «Не выдано» = остаток.
             _tz_counts = (
                 _count_rd_pie_tz(list(sel) if proj_col and sel else None)
                 if _tessa_loaded
@@ -19661,18 +19919,18 @@ def _rd_plan_fallback_view(
                 )
                 _pie_fb = {k: int(v) for k, v in _tz_capped.items() if int(v) > 0}
                 if _not_issued_tz > 0:
-                    _pie_fb["Не выдано"] = _not_issued_tz
+                    _pie_fb[_RD_TESSA_STATUS_NOT_ISSUED] = _not_issued_tz
                 _pie_color_map_fb = {
-                    "Выдано в производство работ": "#27AE60",
-                    "На рассмотрении у ГИП": "#F1C40F",
-                    "Возвращено на доработку": "#C0392B",
-                    "Не выдано": "#F5A9C0",
+                    _RD_TESSA_STATUS_PRODUCTION: "#27AE60",
+                    _RD_TESSA_STATUS_REVIEW: "#F1C40F",
+                    _RD_TESSA_STATUS_REWORK: "#C0392B",
+                    _RD_TESSA_STATUS_NOT_ISSUED: "#F5A9C0",
                 }
                 _pie_caption_fb = (
-                    "Исполнение РД по задачам TESSA: «Выдано в производство работ» "
-                    "(подписан ГИП), «На рассмотрении у ГИП» (передано проектировщиком), "
-                    "«Возвращено на доработку» (отказ/отмена); «Не выдано» — остаток "
-                    "разделов other_*_rd.csv без карточки/события."
+                    "Исполнение РД: статусы из tessa_*_rd.csv (поле Status) — "
+                    "«Выдано в производство работ», «На рассмотрении у ГИП», "
+                    "«Возвращено на доработку»; «Не выдано» = разделы "
+                    "other_*_rd.csv минус эти три категории."
                 )
                 _pie_skip_sanitize = True
             elif status_col and status_col in df.columns and not df.empty:
@@ -19707,7 +19965,12 @@ def _rd_plan_fallback_view(
                         )
                     elif not _detail_tbl_rd.empty and "Статус" in _detail_tbl_rd.columns:
                         _not_issued_csv = int(
-                            (_detail_tbl_rd["Статус"].astype(str).str.strip() == "Не выдан").sum()
+                            _detail_tbl_rd["Статус"]
+                            .astype(str)
+                            .str.strip()
+                            .str.casefold()
+                            .isin({"не выдан", "не выдано"})
+                            .sum()
                         )
                     _stage_fb = _count_tessa_rd_stages(
                         list(sel) if proj_col and sel else None,
@@ -20544,8 +20807,8 @@ def dashboard_rd_delay(df, is_pd: bool = False):
             rd_status_options_rd.append("Передано подрядчику")
         if rework_col_rd and rework_col_rd in df.columns:
             rd_status_options_rd.append("На доработке")
-        if not is_pd and "Не выдан" not in rd_status_options_rd:
-            rd_status_options_rd.append("Не выдан")
+        if not is_pd and _RD_TESSA_STATUS_NOT_ISSUED not in rd_status_options_rd:
+            rd_status_options_rd.append(_RD_TESSA_STATUS_NOT_ISSUED)
         # R23-06 (стр.17): добавить статус «Просрочено подрядчиком» и в «Просрочке выдачи РД/ПД».
         if "Просрочено подрядчиком" not in rd_status_options_rd:
             rd_status_options_rd.append("Просрочено подрядчиком")
@@ -20686,7 +20949,10 @@ def dashboard_rd_delay(df, is_pd: bool = False):
             _done_on_time = _fe.notna() & _pe.notna() & (_fe.dt.normalize() <= _pe.dt.normalize())
             _overdue_plan = _pe.notna() & (_pe.dt.date < _today_d)
             status_mask = status_mask | (_issued & _overdue_plan & (~_done_on_time))
-        if not is_pd and "Не выдан" in selected_statuses_rd:
+        if not is_pd and (
+            "Не выдан" in selected_statuses_rd
+            or _RD_TESSA_STATUS_NOT_ISSUED in selected_statuses_rd
+        ):
             _nv_mask = ~_rd_in_production_mask(filtered_df, in_production_col_rd)
             if on_approval_col_rd and on_approval_col_rd in filtered_df.columns:
                 _oa = pd.to_numeric(
@@ -33098,36 +33364,33 @@ def _pd_delay_date_annotation(
         return None
     end = pd.Timestamp(pd.to_datetime(x_end, errors="coerce")).normalize()
     start = pd.Timestamp(pd.to_datetime(x_start, errors="coerce")).normalize()
-    if pd.isna(end) or pd.isna(start):
+    if pd.isna(end):
+        return None
+    if anchor_end:
+        _days = int((end - start).days) if pd.notna(start) else 0
+        _color = inside_color if _days >= min_days else outside_color
+        return {
+            "x": end.to_pydatetime(),
+            "text": text,
+            "xanchor": "left",
+            "xshift": 8,
+            "font": {"size": 10, "color": _color},
+        }
+    if pd.isna(start):
         return None
     days = int((end - start).days)
     if days <= 0:
         return None
-    if days >= min_days:
-        if not anchor_end:
-            x_plot = (start + pd.Timedelta(days=days / 2)).to_pydatetime()
-            return {
-                "x": x_plot,
-                "text": text,
-                "xanchor": "center",
-                "font": {"size": 10, "color": inside_color},
-            }
-        return {
-            "x": end.to_pydatetime(),
-            "text": text,
-            "xanchor": "right",
-            "font": {"size": 10, "color": inside_color},
-        }
+    x_plot = (start + pd.Timedelta(days=days / 2)).to_pydatetime()
     return {
-        "x": end.to_pydatetime(),
+        "x": x_plot,
         "text": text,
-        "xanchor": "left",
-        "xshift": 10,
-        "font": {"size": 9, "color": outside_color},
+        "xanchor": "center",
+        "font": {"size": 10, "color": inside_color},
     }
 
 
-_PD_DELAY_CHART_ROW_PX = 54
+_PD_DELAY_CHART_ROW_PX = 62
 _PD_DELAY_CHART_VISIBLE_ROWS = 28
 _PD_DELAY_CHART_KEY_SECTION = "pd_delay_section_chart"
 _PD_DELAY_CHART_KEY_PROJECT = "pd_delay_project_chart"
@@ -33146,9 +33409,8 @@ def _pd_delay_chart_height_for_labels(
     max_lines = 1
     for t in ticktexts or []:
         max_lines = max(max_lines, str(t).count("<br>") + 1)
-    lh = float(max(14.0, float(task_font) * 1.35))
-    # +22 px — зазор, чтобы соседние многострочные подписи не наезжали.
-    row_px = int(max(_PD_DELAY_CHART_ROW_PX, int(max_lines * lh + 22.0)))
+    lh = float(max(15.0, float(task_font) * 1.42))
+    row_px = int(max(_PD_DELAY_CHART_ROW_PX, int(max_lines * lh + 30.0)))
     return int(max(min_px, n * row_px + layout_pad))
 
 
@@ -33331,11 +33593,14 @@ def _pd_delay_chart_compact_css(key: str, height: int) -> str:
     )
 
 
-def _render_pd_delay_duration_chart(fig, caption_below: str) -> None:
+def _render_pd_delay_duration_chart(
+    fig, caption_below: str, *, chart_key: str | None = None
+) -> None:
     try:
         _h = int(fig.layout.height)
     except Exception:
         _h = 280
+    _key = str(chart_key or _PD_DELAY_CHART_KEY_SECTION)
     # Много строк «по разделу»: полный fig + внутренний скролл — иначе Streamlit
     # сжимает сотни категорий во вьюпорт и <br>-названия наезжают друг на друга.
     _viewport = min(
@@ -33344,7 +33609,7 @@ def _render_pd_delay_duration_chart(fig, caption_below: str) -> None:
     if _h > _viewport:
         render_chart(
             fig,
-            key=_PD_DELAY_CHART_KEY_SECTION,
+            key=_key,
             height=_h,
             max_height=None,
             scroll_viewport_height=_viewport,
@@ -33354,12 +33619,12 @@ def _render_pd_delay_duration_chart(fig, caption_below: str) -> None:
         )
         return
     st.markdown(
-        _pd_delay_chart_compact_css(_PD_DELAY_CHART_KEY_SECTION, _h),
+        _pd_delay_chart_compact_css(_key, _h),
         unsafe_allow_html=True,
     )
     render_chart(
         fig,
-        key=_PD_DELAY_CHART_KEY_SECTION,
+        key=_key,
         height=_h,
         max_height=None,
         caption_below=caption_below,
@@ -33376,11 +33641,12 @@ def _pd_delay_section_duration_figure(
     green_name: str = "Окончание",
     yellow_hover: str = "Базовое окончание",
     green_hover: str = "Окончание",
+    show_forecast: bool = True,
 ) -> "go.Figure":
-    """ПД: жёлтый max БП, зелёное max окончание, красная просрочка; ось X — даты.
+    """ПД/РД: жёлтый max БП, зелёное max окончание, красная просрочка; ось X — даты.
 
-    Важно: у Plotly Bar на date-axis ``x`` — длительность в ms, ``base`` — дата начала.
-    Передача абсолютной даты в ``x`` даёт ширину «от 1970» и ось уезжает в ~2080.
+    Plotly Bar на date-axis: ``base`` = дата начала, ``x`` = длительность в ms.
+    Абсолютная дата в ``x`` даёт числовую ось / уезд в ~2080.
     """
     import plotly.graph_objects as go
 
@@ -33407,7 +33673,7 @@ def _pd_delay_section_duration_figure(
     delay_ends = pd.to_datetime(work["_delay_end_dt"], errors="coerce")
     delay_d = pd.to_numeric(work["_delay_dur"], errors="coerce").fillna(0.0)
 
-    def _wrap_label(text: str, width: int = 28) -> str:
+    def _wrap_label(text: str, width: int = 24) -> str:
         words = str(text).split()
         if not words:
             return str(text)
@@ -33445,6 +33711,7 @@ def _pd_delay_section_duration_figure(
         ts = _as_ts(v)
         return None if pd.isna(ts) else ts.to_pydatetime()
 
+    fig = go.Figure()
     yellow_y: list[str] = []
     yellow_len: list[float] = []
     yellow_base: list = []
@@ -33458,8 +33725,6 @@ def _pd_delay_section_duration_figure(
         yellow_len.append(ln)
         yellow_base.append(b)
         yellow_cd.append(_pd_chart_date_label(bf_e))
-
-    fig = go.Figure()
     if yellow_y:
         fig.add_trace(
             go.Bar(
@@ -33479,15 +33744,18 @@ def _pd_delay_section_duration_figure(
     green_len: list[float] = []
     green_base: list = []
     green_cd: list[str] = []
-    for y_lbl, st, fin_e in zip(y_labels, starts.tolist(), fin_ends.tolist()):
-        ln = _bar_len_ms(st, fin_e)
-        b = _base_dt(st)
-        if ln is None or b is None:
-            continue
-        green_y.append(y_lbl)
-        green_len.append(ln)
-        green_base.append(b)
-        green_cd.append(_pd_chart_date_label(fin_e))
+    green_ends: list = []
+    if show_forecast:
+        for y_lbl, st, fin_e in zip(y_labels, starts.tolist(), fin_ends.tolist()):
+            ln = _bar_len_ms(st, fin_e)
+            b = _base_dt(st)
+            if ln is None or b is None:
+                continue
+            green_y.append(y_lbl)
+            green_len.append(ln)
+            green_base.append(b)
+            green_cd.append(_pd_chart_date_label(fin_e))
+            green_ends.append(_base_dt(fin_e))
     if green_y:
         fig.add_trace(
             go.Bar(
@@ -33507,19 +33775,22 @@ def _pd_delay_section_duration_figure(
     red_len: list[float] = []
     red_base: list = []
     red_cd: list[str] = []
-    for y_lbl, bf_e, d_e, d_days in zip(
-        y_labels, bf_ends.tolist(), delay_ends.tolist(), delay_d.tolist()
-    ):
-        if float(d_days) <= 0:
-            continue
-        ln = _bar_len_ms(bf_e, d_e)
-        b = _base_dt(bf_e)
-        if ln is None or b is None:
-            continue
-        red_y.append(y_lbl)
-        red_len.append(ln)
-        red_base.append(b)
-        red_cd.append(_pd_chart_date_label(d_e))
+    red_ends: list = []
+    if show_forecast:
+        for y_lbl, bf_e, d_e, d_days in zip(
+            y_labels, bf_ends.tolist(), delay_ends.tolist(), delay_d.tolist()
+        ):
+            if float(d_days) <= 0:
+                continue
+            ln = _bar_len_ms(bf_e, d_e)
+            b = _base_dt(bf_e)
+            if ln is None or b is None:
+                continue
+            red_y.append(y_lbl)
+            red_len.append(ln)
+            red_base.append(b)
+            red_cd.append(_pd_chart_date_label(d_e))
+            red_ends.append(_base_dt(d_e))
     if red_y:
         fig.add_trace(
             go.Bar(
@@ -33547,27 +33818,45 @@ def _pd_delay_section_duration_figure(
         _ann_kw = dict(y=y_lbl, showarrow=False, yanchor="middle")
         bf_n = _as_ts(bf_e)
         fin_n = _as_ts(fin_e)
-        # Жёлтая подпись справа от БО (когда нет зелёного поверх жёлтого хвоста).
-        if str(ly).strip() and pd.notna(bf_n) and (pd.isna(fin_n) or fin_n < bf_n):
+        _has_red = show_forecast and float(d_days) > 0 and pd.notna(d_e)
+        # Жёлтая дата — справа от конца полосы; при красном сегменте только прогнозная.
+        if (
+            str(ly).strip()
+            and pd.notna(bf_n)
+            and (pd.isna(fin_n) or fin_n <= bf_n)
+            and not _has_red
+        ):
             _y_ann = _pd_delay_date_annotation(
-                bf_e, st, ly, inside_color="#1a1a1a", min_days=10, anchor_end=True
+                bf_e,
+                st,
+                ly,
+                inside_color="#1a1a1a",
+                outside_color="#1a1a1a",
+                anchor_end=True,
             )
             if _y_ann:
                 fig.add_annotation(**_ann_kw, **_y_ann)
-        if pd.notna(fin_e) and str(lg).strip():
+        if show_forecast and pd.notna(fin_e) and str(lg).strip() and not _has_red:
             _g_ann = _pd_delay_date_annotation(
-                fin_e, st, lg, inside_color="#FFFFFF", min_days=8, anchor_end=True
+                fin_e,
+                st,
+                lg,
+                inside_color="#1a1a1a",
+                outside_color="#1a1a1a",
+                anchor_end=True,
             )
             if _g_ann:
                 fig.add_annotation(**_ann_kw, **_g_ann)
-        if float(d_days) > 0 and pd.notna(bf_e) and pd.notna(d_e):
+        if _has_red and pd.notna(d_e):
+            _r_lbl = str(lr).strip().split("/")[-1].strip() or str(lr).strip()
+            if "/" in str(lr):
+                _r_lbl = _rd_format_chart_date_cell(lr) or _r_lbl
             _r_ann = _pd_delay_date_annotation(
                 d_e,
                 bf_e,
-                lr,
-                inside_color="#FFFFFF",
-                outside_color="#E8E8E8",
-                min_days=8,
+                _r_lbl,
+                inside_color="#1a1a1a",
+                outside_color="#1a1a1a",
                 anchor_end=True,
             )
             if _r_ann:
@@ -33581,8 +33870,8 @@ def _pd_delay_section_duration_figure(
         height=_chart_h,
         showlegend=True,
         legend=standard_chart_legend(),
-        margin=dict(l=16, r=120, t=56, b=48),
-        bargap=0.34,
+        margin=dict(l=16, r=140, t=56, b=48),
+        bargap=0.44,
     )
     fig.update_traces(selector=dict(type="bar"), width=0.48)
     fig.update_yaxes(
@@ -33606,7 +33895,7 @@ def _pd_delay_section_duration_figure(
     if _x_pts:
         d0 = min(_x_pts)
         d1 = max(_x_pts)
-        pad = max((d1 - d0).days * 0.06, 4)
+        pad = max((d1 - d0).days * 0.08, 6)
         fig.update_xaxes(
             type="date",
             tickformat="%d.%m.%Y",
@@ -33623,6 +33912,8 @@ def _pd_delay_section_duration_figure(
     fig.update_xaxes(
         tickfont=dict(color=_ax_clr, size=11),
         title_font=dict(color=_ax_clr),
+        type="date",
+        tickformat="%d.%m.%Y",
     )
     fig.update_yaxes(
         tickfont=dict(color=_ax_clr, size=11),
@@ -34698,7 +34989,7 @@ def dashboard_documentation(
         if rework_col and rework_col in df.columns:
             rd_status_options.append("На доработке")
         if not is_pd:
-            rd_status_options.append("Не выдан")
+            rd_status_options.append(_RD_TESSA_STATUS_NOT_ISSUED)
         # R23-06 (стр.17): статус «Просрочено подрядчиком» — и для РД, и для ПД.
         if "Просрочено подрядчиком" not in rd_status_options:
             rd_status_options.append("Просрочено подрядчиком")
@@ -34914,7 +35205,10 @@ def dashboard_documentation(
                 _pd_oc = _fin_oc.notna() & (_fin_oc.dt.date < today_d) & (_pc_oc < 99.99)
                 status_mask = status_mask | _pd_oc
 
-        if not is_pd and "Не выдан" in selected_statuses:
+        if not is_pd and (
+            "Не выдан" in selected_statuses
+            or _RD_TESSA_STATUS_NOT_ISSUED in selected_statuses
+        ):
             _nv_mask = ~_rd_in_production_mask(filtered_df, in_production_col)
             if on_approval_col and on_approval_col in filtered_df.columns:
                 _oa = pd.to_numeric(
@@ -34995,11 +35289,8 @@ def dashboard_documentation(
                 else 0.0
             )
 
-            # ТЗ (Рабочая документация): круговая «Исполнение РД» по задачам TESSA.
-            # 100% = разделы other_*_rd.csv; доли — «Выдано в производство работ»
-            # (Подписан+ГИП, зелёный), «На рассмотрении у ГИП» (Подписан+
-            # Проектировщик, жёлтый), «Возвращено на доработку» (Отказ/Отмена,
-            # красный), остаток «Не выдано» (розовый).
+            # Исполнение РД: Status из tessa_*_rd.csv; 100% = other_*_rd.csv;
+            # «Не выдано» = план − три активных статуса.
             _stage_counts = _count_rd_pie_tz(selected_projects_doc or None)
             _stage_has_any = any(v > 0 for v in _stage_counts.values())
 
@@ -35014,29 +35305,29 @@ def dashboard_documentation(
                 not_issued_sum = max(total_sections - _active_sum, 0.0)
                 st.subheader("Исполнение РД")
                 suppress_caption(
-                    "Исполнение РД по задачам TESSA: «Выдано в производство работ» "
-                    "(подписан ГИП), «На рассмотрении у ГИП» (передано проектировщиком), "
-                    "«Возвращено на доработку» (отказ/отмена); «Не выдано» — остаток "
-                    "разделов other_*_rd.csv без карточки/события."
+                    "Исполнение РД: статусы из tessa_*_rd.csv (поле Status) — "
+                    "«Выдано в производство работ», «На рассмотрении у ГИП», "
+                    "«Возвращено на доработку»; «Не выдано» = разделы "
+                    "other_*_rd.csv минус эти три категории."
                 )
                 pie_data = {
-                    "Выдано в производство работ": int(
-                        _stage_counts.get("Выдано в производство работ", 0)
+                    _RD_TESSA_STATUS_PRODUCTION: int(
+                        _stage_counts.get(_RD_TESSA_STATUS_PRODUCTION, 0)
                     ),
-                    "На рассмотрении у ГИП": int(
-                        _stage_counts.get("На рассмотрении у ГИП", 0)
+                    _RD_TESSA_STATUS_REVIEW: int(
+                        _stage_counts.get(_RD_TESSA_STATUS_REVIEW, 0)
                     ),
-                    "Возвращено на доработку": int(
-                        _stage_counts.get("Возвращено на доработку", 0)
+                    _RD_TESSA_STATUS_REWORK: int(
+                        _stage_counts.get(_RD_TESSA_STATUS_REWORK, 0)
                     ),
-                    "Не выдано": int(round(max(not_issued_sum, 0.0))),
+                    _RD_TESSA_STATUS_NOT_ISSUED: int(round(max(not_issued_sum, 0.0))),
                 }
                 pie_data = {k: v for k, v in pie_data.items() if v > 0}
                 _pie_color_map = {
-                    "Выдано в производство работ": "#27AE60",
-                    "На рассмотрении у ГИП": "#F1C40F",
-                    "Возвращено на доработку": "#C0392B",
-                    "Не выдано": "#F5A9C0",
+                    _RD_TESSA_STATUS_PRODUCTION: "#27AE60",
+                    _RD_TESSA_STATUS_REVIEW: "#F1C40F",
+                    _RD_TESSA_STATUS_REWORK: "#C0392B",
+                    _RD_TESSA_STATUS_NOT_ISSUED: "#F5A9C0",
                 }
                 _build_pie = bool(pie_data)
             else:
@@ -39442,6 +39733,18 @@ def _forecast_is_lot_value(s) -> bool:
     return bool(re.match(r"^\s*\d", txt))
 
 
+def _forecast_norm_lot_id(v) -> str:
+    """Нормализация ID лота для сопоставления 1С ↔ MSP (регистр, хвост .0)."""
+    if v is None or (isinstance(v, float) and pd.isna(v)):
+        return ""
+    s = str(v).strip()
+    if not s or s.casefold() in ("nan", "none", "<na>"):
+        return ""
+    if re.fullmatch(r"\d+\.0+", s):
+        s = s.split(".", 1)[0]
+    return s.casefold()
+
+
 def _forecast_merge_bddcs_from_1c(project_df: pd.DataFrame, project_name: str) -> pd.DataFrame:
     """
     Подставляет суммы из оборотов 1С (БДДС):
@@ -39545,7 +39848,7 @@ def _forecast_merge_bddcs_from_1c(project_df: pd.DataFrame, project_name: str) -
     _mps_lotid_col = "ЛОТ_ID" if "ЛОТ_ID" in out.columns else None
     _per_lot_done = False
     if lotid_col is not None and _mps_lotid_col is not None:
-        lotid_ser = t_bd[lotid_col].astype(str).str.strip()
+        lotid_ser = t_bd[lotid_col].map(_forecast_norm_lot_id)
         _plan_sel = plan_mask & is_lot_art
         _fact_sel = fact_mask & is_lot_art
         plan_map = (
@@ -39556,28 +39859,31 @@ def _forecast_merge_bddcs_from_1c(project_df: pd.DataFrame, project_name: str) -
             amt_num.loc[_fact_sel].groupby(lotid_ser.loc[_fact_sel]).sum().to_dict()
             if bool(_fact_sel.any()) else {}
         )
-        for _bad in ("", "nan", "none", "None"):
-            plan_map.pop(_bad, None)
-            fact_map.pop(_bad, None)
+        plan_map.pop("", None)
+        fact_map.pop("", None)
         if plan_map or fact_map:
-            ids = out[_mps_lotid_col].astype(str).str.strip()
+            ids = out[_mps_lotid_col].map(_forecast_norm_lot_id)
             counts = ids.value_counts()
 
             def _per_lot(idv, m):
                 v = m.get(idv)
-                if v is None or idv in ("", "nan", "none", "None"):
+                if v is None or not idv:
                     return 0.0
                 c = int(counts.get(idv, 1)) or 1
                 return float(v) / c
 
-            out["budget plan"] = [float(_per_lot(i, plan_map)) for i in ids]
-            out["budget fact"] = [float(_per_lot(i, fact_map)) for i in ids]
-            try:
-                out.attrs["forecast_bddcs_injected_from_1c"] = True
-                out.attrs["forecast_bddcs_per_lot"] = True
-            except Exception:
-                pass
-            _per_lot_done = True
+            _bp_new = pd.Series([float(_per_lot(i, plan_map)) for i in ids], index=out.index)
+            _bf_new = pd.Series([float(_per_lot(i, fact_map)) for i in ids], index=out.index)
+            # Если ID не сопоставились — не затираем нулями, уходим в пропорциональный фолбэк.
+            if float(_bp_new.sum()) > 0.0 or float(_bf_new.sum()) > 0.0:
+                out["budget plan"] = _bp_new
+                out["budget fact"] = _bf_new
+                try:
+                    out.attrs["forecast_bddcs_injected_from_1c"] = True
+                    out.attrs["forecast_bddcs_per_lot"] = True
+                except Exception:
+                    pass
+                _per_lot_done = True
     if _per_lot_done:
         return out
 
@@ -39585,12 +39891,23 @@ def _forecast_merge_bddcs_from_1c(project_df: pd.DataFrame, project_name: str) -
         w = pd.to_numeric(out["budget plan"], errors="coerce").fillna(0.0)
     else:
         w = pd.Series(0.0, index=out.index)
+    # Фолбэк: разносим только по строкам-лотам (иначе агрегация по лоту отбрасывает сумму).
+    _lot_text_col = "ЛОТ" if "ЛОТ" in out.columns else ("lot" if "lot" in out.columns else None)
+    _lot_row_mask = pd.Series(False, index=out.index)
+    if _lot_text_col is not None:
+        _lot_row_mask = out[_lot_text_col].map(_forecast_is_lot_value)
+    if bool(_lot_row_mask.any()):
+        w = w.where(_lot_row_mask, 0.0)
     wsum = float(w.sum())
     _fc_uniform_lot_weights = False
     if wsum <= 0 and (plan_sum > 0 or fact_sum > 0):
         _fc_uniform_lot_weights = True
-        w = pd.Series(1.0, index=out.index)
-        wsum = float(len(out))
+        if bool(_lot_row_mask.any()):
+            w = _lot_row_mask.astype(float)
+            wsum = float(w.sum())
+        else:
+            w = pd.Series(1.0, index=out.index)
+            wsum = float(len(out))
     if wsum > 0 and (plan_sum > 0 or fact_sum > 0):
         out["budget plan"] = w / wsum * float(plan_sum)
         out["budget fact"] = w / wsum * float(fact_sum)
@@ -40212,16 +40529,19 @@ def _forecast_financier_status_dataset(
     if out.empty:
         return out
 
+    _from_fact = str(dev_base).strip() == "БДДС факт"
+
     def _stat_txt(v: float) -> str:
         try:
             x = float(v)
         except (TypeError, ValueError):
             return ""
-        if x < 0:
-            return "Экономия"
+        if abs(x) < 1e-9:
+            return "Без отклонения"
+        # dv > 0: прогноз выше базы → перерасход (зелёный); dv < 0 → отставание (красный)
         if x > 0:
-            return "Перерасход"
-        return "Без отклонения"
+            return "Фактический перерасход" if _from_fact else "Прогнозируется перерасход"
+        return "Фактическое отставание" if _from_fact else "Прогнозируется отставание"
 
     out["Месяц"] = out["_period"].apply(format_period_ru)
     out["БДДС (план), млн"] = out["plan_rub"] / 1e6
@@ -40229,11 +40549,11 @@ def _forecast_financier_status_dataset(
     out["БДДС (прогноз), млн"] = out["forecast_rub"] / 1e6
     _base_mln = (
         out["БДДС (факт), млн"]
-        if str(dev_base).strip() == "БДДС факт"
+        if _from_fact
         else out["БДДС (план), млн"]
     )
     out["Отклонение по сумме, млн"] = out["БДДС (прогноз), млн"] - _base_mln
-    out["Статус для финансиста"] = out["Отклонение по сумме, млн"].map(_stat_txt)
+    out["Статус"] = out["Отклонение по сумме, млн"].map(_stat_txt)
     # Сортировка хронологическая по периоду (а не по строке «Месяц»).
     out["_period_sort"] = out["_period"].map(_forecast_norm_month_period)
     disp = (
@@ -40245,7 +40565,7 @@ def _forecast_financier_status_dataset(
                 "БДДС (факт), млн",
                 "БДДС (прогноз), млн",
                 "Отклонение по сумме, млн",
-                "Статус для финансиста",
+                "Статус",
             ]
         ].reset_index(drop=True)
     )
@@ -40255,14 +40575,14 @@ def _forecast_financier_status_dataset(
 
 
 def _forecast_financier_status_table_html(df: pd.DataFrame) -> str:
-    """«Статус»: ● зелёный при экономии (прогноз < план), красный при перерасходе."""
+    """«Статус»: ● зелёный при перерасходе (прогноз > база), красный при отставании."""
     if df is None or getattr(df, "empty", True):
         return "<p>Нет данных для статуса.</p>"
     import utils as u
     from dashboards.light_theme import finance_dev_negative_color
 
     _col_dev = "Отклонение по сумме, млн"
-    _col_stat = "Статус для финансиста"
+    _col_stat = "Статус" if "Статус" in df.columns else "Статус для финансиста"
     green = finance_dev_negative_color()
     red = "hsl(348,100%,63%)"
     neutral_bullet = "#94a3b8"
@@ -40322,7 +40642,8 @@ def _forecast_financier_status_table_html(df: pd.DataFrame) -> str:
                 else:
                     txt = f"{float(num):+.2f}"
                     txt_esc = html_module.escape(txt)
-                    _cls = "fc-st-cell-green" if float(num) < 0 else "fc-st-cell-red"
+                    # + перерасход (зелёный), − отставание (красный)
+                    _cls = "fc-st-cell-green" if float(num) > 0 else "fc-st-cell-red"
                     parts.append(
                         f'<td class="{_cls}" style="border:{_td_border}; padding:5px 8px; '
                         f'font-weight:700;"><span>{txt_esc}</span></td>'
@@ -40334,7 +40655,7 @@ def _forecast_financier_status_table_html(df: pd.DataFrame) -> str:
                     dv = float("nan")
                 if pd.isna(dv) or abs(float(dv)) < 1e-9:
                     bullet = neutral_bullet
-                elif dv < 0:
+                elif dv > 0:
                     bullet = green
                 else:
                     bullet = red
@@ -40393,6 +40714,8 @@ def _render_forecast_lot_editor_sticky_header() -> None:
         ".fc-fc-lot-hdr-stick table{width:100%;border-collapse:collapse;table-layout:fixed;}"
         ".fc-fc-lot-hdr-stick th{color:#f1f5f9;font-size:13px;font-weight:700;"
         "text-align:left;padding:4px 6px;white-space:nowrap;}"
+        ".fc-fc-lot-name{color:#f1f5f9;font-size:13px;font-weight:600;line-height:1.35;"
+        "padding:6px 4px 0;word-break:break-word;}"
         "</style>"
         '<div class="fc-fc-lot-hdr-stick"><table><thead><tr>'
         '<th style="width:15%">Лот</th><th style="width:16%">Условие</th>'
@@ -40424,7 +40747,12 @@ def _render_forecast_lot_editor_widgets(
         _use_abc = _forecast_row_modes_use_abc(_dist0)
         _c = st.columns([1.25, 1.35, 0.95, 0.95, 1.05, 1.0, 0.55, 0.55, 0.55], gap="small")
         with _c[0]:
-            st.text(_lot[:48] + ("…" if len(_lot) > 48 else ""))
+            _lot_short = _lot[:48] + ("…" if len(_lot) > 48 else "")
+            st.markdown(
+                f'<div class="fc-fc-lot-name" title="{html_module.escape(_lot, quote=True)}">'
+                f"{html_module.escape(_lot_short)}</div>",
+                unsafe_allow_html=True,
+            )
         with _c[1]:
             _dist = st.selectbox(
                 "усл",
@@ -44077,8 +44405,52 @@ def _count_tessa_rd_stages(
     return result
 
 
+_RD_TESSA_STATUS_PRODUCTION = "Выдано в производство работ"
+_RD_TESSA_STATUS_REVIEW = "На рассмотрении у ГИП"
+_RD_TESSA_STATUS_REWORK = "Возвращено на доработку"
+_RD_TESSA_STATUS_NOT_ISSUED = "Не выдано"
+_RD_TESSA_STATUS_ACTIVE: tuple[str, ...] = (
+    _RD_TESSA_STATUS_PRODUCTION,
+    _RD_TESSA_STATUS_REVIEW,
+    _RD_TESSA_STATUS_REWORK,
+)
+
+
+def _rd_canonical_tessa_rd_status(raw: object) -> str | None:
+    """Нормализация `Status` из tessa_*_rd.csv → одно из трёх значений ТЗ или None."""
+    if raw is None or (isinstance(raw, float) and pd.isna(raw)):
+        return None
+    s = str(raw).strip()
+    if not s or s.casefold() in ("nan", "none", "<na>", "nat", "n/a", "—", "-"):
+        return None
+    sl = " ".join(s.casefold().split())
+    if sl in (
+        "выдано в производство работ",
+        "выдан в производство работ",
+        "направлен в производство работ",
+    ):
+        return _RD_TESSA_STATUS_PRODUCTION
+    if sl in (
+        "на рассмотрении у гип",
+        "на рассмотрение у гип",
+        "на рассмотрении у гип.",
+    ) or (
+        "рассмотрен" in sl and "гип" in sl
+    ):
+        return _RD_TESSA_STATUS_REVIEW
+    if sl in (
+        "возвращено на доработку",
+        "возвращен на доработку",
+        "возвращена на доработку",
+    ) or ("возвращ" in sl and "доработ" in sl):
+        return _RD_TESSA_STATUS_REWORK
+    if sl in ("не выдано", "не выдан"):
+        return _RD_TESSA_STATUS_NOT_ISSUED
+    return None
+
+
 def _rd_pie_stage_by_card_tz() -> dict[str, str]:
-    """ТЗ круговой «Исполнение РД»: текущая стадия карточки по задачам TESSA.
+    """Фолбэк стадии карточки по задачам TESSA (если в tessa_*_rd.csv нет Status).
 
     По `tessa_tasks_data` (CardID = DocID карточки РД):
       • production — «Выдано в производство работ»: OptionCaption содержит
@@ -44152,14 +44524,15 @@ def _count_rd_pie_tz(
     *,
     section_labels_allowlist: set[str] | None = None,
 ) -> dict[str, int]:
-    """ТЗ-счётчики круговой «Исполнение РД» по карточкам TESSA РД (tessa_*_rd.csv):
+    """Счётчики круговой «Исполнение РД» по полю Status в tessa_*_rd.csv:
     «Выдано в производство работ» / «На рассмотрении у ГИП» / «Возвращено на
-    доработку». Долю «Не выдано» добавляет рендер (Всего − эти три).
+    доработку». «Не выдано» = разделы other_*_rd.csv − сумма этих трёх (в рендере).
+    Если Status пуст у всех карточек — фолбэк на стадии по задачам TESSA.
     """
     result = {
-        "Выдано в производство работ": 0,
-        "На рассмотрении у ГИП": 0,
-        "Возвращено на доработку": 0,
+        _RD_TESSA_STATUS_PRODUCTION: 0,
+        _RD_TESSA_STATUS_REVIEW: 0,
+        _RD_TESSA_STATUS_REWORK: 0,
     }
     try:
         tdf = st.session_state.get("tessa_data")
@@ -44178,6 +44551,7 @@ def _count_rd_pie_tz(
         t, ["SubDivisionVersionName", "SectionName", "DivisionName"]
     )
     doc_id_col = _tessa_find_column(t, ["DocID", "DocId", "CardID", "CardId"])
+    status_col = _tessa_find_column(t, ["Status", "Статус"])
     if not project_col or not cipher_col or not doc_id_col:
         return result
     mask_card = t[cipher_col].map(_tessa_cell_has_value).fillna(False)
@@ -44217,13 +44591,24 @@ def _count_rd_pie_tz(
         if t.empty:
             return result
 
+    _from_status = 0
+    if status_col and status_col in t.columns:
+        for raw in t[status_col].tolist():
+            canon = _rd_canonical_tessa_rd_status(raw)
+            if canon in result:
+                result[canon] += 1
+                _from_status += 1
+    if _from_status > 0:
+        return result
+
+    # Фолбэк: старое определение стадии по задачам (нет колонки Status).
     stage_by_card = _rd_pie_stage_by_card_tz()
     if not stage_by_card:
         return result
     _label = {
-        "production": "Выдано в производство работ",
-        "review": "На рассмотрении у ГИП",
-        "rework": "Возвращено на доработку",
+        "production": _RD_TESSA_STATUS_PRODUCTION,
+        "review": _RD_TESSA_STATUS_REVIEW,
+        "rework": _RD_TESSA_STATUS_REWORK,
     }
     for _doc in t[doc_id_col].astype(str).str.strip().tolist():
         _k = stage_by_card.get(_doc)
@@ -44362,19 +44747,12 @@ def _r23_12_load_rd_plan_lookup() -> dict:
                 continue
             entry = slug_tbl.setdefault((ci.casefold(), se.casefold()), {})
             if c_contract and "contract" not in entry:
-                dt = str(row.get(c_contract, "") or "").strip()
-                if dt and dt.lower() not in ("nan", "none"):
+                dt = _rd_format_chart_date_cell(row.get(c_contract, ""))
+                if dt:
                     entry["contract"] = dt
             if c_forecast and "forecast" not in entry:
-                dt = str(row.get(c_forecast, "") or "").strip()
-                # Колонка «Прогнозная дата выдачи разделов» местами содержит
-                # свободный текст («после согласования узлов…») — берём только
-                # значения, похожие на дату (иначе в таблице показывался текст).
-                if (
-                    dt
-                    and dt.lower() not in ("nan", "none")
-                    and re.match(r"^\s*\d{1,2}[.\-/]\d{1,2}[.\-/]\d{2,4}\s*$", dt)
-                ):
+                dt = _rd_format_chart_date_cell(row.get(c_forecast, ""))
+                if dt:
                     entry["forecast"] = dt
     return result
 
@@ -45030,6 +45408,7 @@ def _build_tessa_rd_detail_table(
     doc_number_col = _tessa_find_column(t, ["DocNumber"])
     internal_col = _tessa_find_column(t, ["InternalID", "InternalId", "Internal Id"])
     kr_state_col = _tessa_find_column(t, ["KrState"])
+    status_col = _tessa_find_column(t, ["Status", "Статус"])
     id_dog_col = _tessa_find_column(t, ["1C_ID_DOG", "1C_ID_Dog"])
     doc_id_col = _tessa_find_column(t, ["DocID", "DocId", "CardID", "CardId"])
 
@@ -45078,15 +45457,15 @@ def _build_tessa_rd_detail_table(
         _task_dates = _rd_task_dates_by_card() or {}
     except Exception:
         _task_dates = {}
-    # Статус раздела «как на круговой»: стадия карточки по задачам TESSA.
+    # Фолбэк статуса, если в карточке нет поля Status.
     try:
         _stage_by_card = _rd_pie_stage_by_card_tz() or {}
     except Exception:
         _stage_by_card = {}
     _STAGE_TO_STATUS = {
-        "production": "Выдано в производство работ",
-        "review": "На рассмотрении у ГИП",
-        "rework": "Возвращено на доработку",
+        "production": _RD_TESSA_STATUS_PRODUCTION,
+        "review": _RD_TESSA_STATUS_REVIEW,
+        "rework": _RD_TESSA_STATUS_REWORK,
     }
     # Завершённые карточки (все связанные задачи имеют статус «Завершено»).
     try:
@@ -45160,8 +45539,8 @@ def _build_tessa_rd_detail_table(
                             _entry = _e
                             break
                 if _entry:
-                    contract_due_date = _entry.get("contract", "") or ""
-                    csv_forecast_date = _entry.get("forecast", "") or ""
+                    contract_due_date = _rd_format_chart_date_cell(_entry.get("contract", ""))
+                    csv_forecast_date = _rd_format_chart_date_cell(_entry.get("forecast", ""))
         # Fallback из БД, если файловый lookup не дал договорную/прогнозную дату.
         if (not contract_due_date or not csv_forecast_date) and (
             _db_dates.get("fc") or _db_dates.get("pcn")
@@ -45183,9 +45562,9 @@ def _build_tessa_rd_detail_table(
                         break
             if _e_db:
                 if not contract_due_date:
-                    contract_due_date = _e_db.get("contract", "") or ""
+                    contract_due_date = _rd_format_chart_date_cell(_e_db.get("contract", ""))
                 if not csv_forecast_date:
-                    csv_forecast_date = _e_db.get("forecast", "") or ""
+                    csv_forecast_date = _rd_format_chart_date_cell(_e_db.get("forecast", ""))
         # «Прогнозная дата выдачи разделов» — строго из CSV-плана (колонка
         # «Прогнозная дата выдачи разделов», только валидные даты). Датой
         # подписания проектировщиком её больше НЕ подменяем: это факт «загрузки
@@ -45202,10 +45581,15 @@ def _build_tessa_rd_detail_table(
         production_str = (
             _production_dt.strftime("%d.%m.%Y") if _production_dt is not None else ""
         )
-        # Статус «как на круговой»: стадия карточки; нет карточки/задач → «Не выдан».
-        _status = _STAGE_TO_STATUS.get(
-            _stage_by_card.get(str(_doc_id)) if _doc_id else None, "Не выдан"
+        # Статус из tessa_*_rd.csv → Status (последнее изменение документа).
+        _status = _rd_canonical_tessa_rd_status(
+            _safe(status_col, r) if status_col else ""
         )
+        if not _status or _status == _RD_TESSA_STATUS_NOT_ISSUED:
+            _fb = _STAGE_TO_STATUS.get(
+                _stage_by_card.get(str(_doc_id)) if _doc_id else None
+            )
+            _status = _fb or _RD_TESSA_STATUS_NOT_ISSUED
         rows.append(
             {
                 # Внутренние имена (их читают хелперы/фильтр/сопоставление секций);
