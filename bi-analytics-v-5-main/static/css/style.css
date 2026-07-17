@@ -1469,6 +1469,13 @@ html body .st-key-pd_dev_metric_neg [data-testid="metric-container"] [data-testi
 .main [data-testid="stHorizontalBlock"] [data-testid="stMarkdownContainer"] span {
     color: #e8eef5 !important;
 }
+/* Редактор лотов БДДС: не перекрашивать название лота общим правилом колонок */
+.main [data-testid="column"] [data-testid="stMarkdownContainer"] .fc-fc-lot-name,
+.main [data-testid="stHorizontalBlock"] [data-testid="stMarkdownContainer"] .fc-fc-lot-name,
+.main [data-testid="stMarkdownContainer"] .fc-fc-lot-name {
+    color: #f1f5f9 !important;
+    -webkit-text-fill-color: #f1f5f9 !important;
+}
 /* KPI отклонения ПД: не перекрашивать в «белый» цвет колонок */
 .main [data-testid="column"] [data-testid="stMarkdownContainer"] .pd-doc-dev-metric-label,
 .main [data-testid="stHorizontalBlock"] [data-testid="stMarkdownContainer"] .pd-doc-dev-metric-label,

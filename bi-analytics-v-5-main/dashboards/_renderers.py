@@ -4481,21 +4481,41 @@ def _apply_finance_light_preview_chart_colors(fig) -> None:
             tname = type(tr).__name__
             if tname == "Bar" or getattr(tr, "type", None) == "bar":
                 tf = getattr(tr, "textfont", None)
-                if tf is None:
-                    continue
+                otf = getattr(tr, "outsidetextfont", None)
                 try:
-                    cur = (
-                        tf.color
-                        if hasattr(tf, "color")
-                        else (tf.get("color") if isinstance(tf, dict) else None)
-                    )
+                    cur = None
+                    if tf is not None:
+                        cur = (
+                            tf.color
+                            if hasattr(tf, "color")
+                            else (tf.get("color") if isinstance(tf, dict) else None)
+                        )
+                    if cur is None and otf is not None:
+                        cur = (
+                            otf.color
+                            if hasattr(otf, "color")
+                            else (otf.get("color") if isinstance(otf, dict) else None)
+                        )
                 except Exception:
                     cur = None
+                if isinstance(cur, (list, tuple)):
+                    # per-point цвета отклонения — не трогаем
+                    continue
                 if cur in _keep_bar_label_colors:
                     continue
-                if cur in _light_bar_label_colors:
-                    sz = getattr(tf, "size", None) if hasattr(tf, "size") else None
-                    tr.update(textfont=dict(color=_lbl, size=sz))
+                sz = None
+                try:
+                    if tf is not None:
+                        sz = getattr(tf, "size", None) if hasattr(tf, "size") else None
+                    if sz is None and otf is not None:
+                        sz = getattr(otf, "size", None) if hasattr(otf, "size") else None
+                except Exception:
+                    sz = None
+                if cur in _light_bar_label_colors or cur is None:
+                    _kw = dict(color=_lbl)
+                    if sz is not None:
+                        _kw["size"] = sz
+                    tr.update(textfont=_kw, outsidetextfont=_kw)
                 continue
             if tname == "Scatter" or getattr(tr, "type", None) == "scatter":
                 tf = getattr(tr, "textfont", None)
@@ -13156,6 +13176,47 @@ def _render_finance_bar_chart(
             fig = gdrs_sanitize_bar_text_labels(fig, get_gdrs_theme("light"))
     except Exception:
         pass
+    # Гарантия: у bar есть outside-подписи (sanitize раньше мог затирать text=None).
+    try:
+        for _tr in fig.data or []:
+            if getattr(_tr, "type", None) != "bar":
+                continue
+            _ys = list(getattr(_tr, "y", None) or [])
+            _raw_txt = getattr(_tr, "text", None)
+            try:
+                _txts = list(_raw_txt) if _raw_txt is not None else []
+            except Exception:
+                _txts = []
+            if _plotly_text_all_empty(_txts) and _ys:
+                _txts = []
+                for _y in _ys:
+                    try:
+                        _yf = float(_y)
+                    except (TypeError, ValueError):
+                        _txts.append("")
+                        continue
+                    _txts.append(f"{_yf:.1f}" if abs(_yf) >= 0.05 else "")
+            _tf = getattr(_tr, "outsidetextfont", None) or getattr(_tr, "textfont", None)
+            _tf_kw = dict(size=10, color=_fin_chart_label_color())
+            try:
+                if _tf is not None:
+                    if getattr(_tf, "size", None) is not None:
+                        _tf_kw["size"] = _tf.size
+                    if getattr(_tf, "color", None) is not None:
+                        _tf_kw["color"] = _tf.color
+            except Exception:
+                pass
+            _tr.update(
+                text=_txts,
+                texttemplate="%{text}",
+                textposition="outside",
+                cliponaxis=False,
+                constraintext="none",
+                textfont=_tf_kw,
+                outsidetextfont=_tf_kw,
+            )
+    except Exception:
+        pass
     _apply_plotly_spec_411_labels(fig)
     _finance_plotly_xaxis_category_pad(fig, n)
     try:
@@ -13166,6 +13227,18 @@ def _render_finance_bar_chart(
                 range=[float(_yr[0]), float(_yr[1])],
                 autorange=False,
             )
+    except Exception:
+        pass
+    # Annotations поверх столбцов — гарантированно видны в iframe/светлом превью.
+    # bar.text отключаем, чтобы не было двойных подписей.
+    try:
+        fig = _finance_force_grouped_bar_annotations(fig, min_abs=0.05)
+        fig.update_traces(
+            selector=dict(type="bar"),
+            text=None,
+            texttemplate=None,
+            textposition=None,
+        )
     except Exception:
         pass
 
@@ -13191,7 +13264,8 @@ def _render_finance_bar_chart(
             margin=dict(
                 l=int(_m.l or 56) if _m is not None else 56,
                 r=max(int(_m.r or 24) if _m is not None else 24, 88),
-                t=int(_m.t or 68) if _m is not None else 68,
+                # Не срезать верх: outside-подписи над столбцами.
+                t=max(int(_m.t or 68) if _m is not None else 68, 120),
                 b=min(_b, 108),
             )
         )
@@ -40037,7 +40111,11 @@ def _forecast_lot_label_series(cur: pd.DataFrame) -> pd.Series:
 
 
 def _forecast_editor_visible_mask(pdf: pd.DataFrame) -> pd.Series:
-    """Какие строки показывать в UI редактора (расчёт — по всем строкам project_df)."""
+    """Какие строки показывать в UI редактора (расчёт — по всем строкам project_df).
+
+    После агрегации по лоту уровней MSP нет — по умолчанию только строки с БДДС ≠ 0,
+    иначе в редакторе десятки пустых WBS-узлов («55.8…») и кажется, что сумм нет.
+    """
     if pdf is None or getattr(pdf, "empty", True):
         return pd.Series(dtype=bool)
     bp = (
@@ -40058,9 +40136,9 @@ def _forecast_editor_visible_mask(pdf: pd.DataFrame) -> pd.Series:
         ls = pd.to_numeric(pdf["level"], errors="coerce")
     if ls is not None:
         structural = ls.fillna(99) <= 2
-    else:
-        structural = pd.Series(False, index=pdf.index)
-    return has_sum | (~structural)
+        return has_sum | (~structural)
+    # Нет иерархии (уже сгруппировано по лоту) — скрываем нулевые строки.
+    return has_sum
 
 
 def _forecast_deduplicate_msp_rows(pdf: pd.DataFrame) -> pd.DataFrame:
@@ -40371,7 +40449,7 @@ def _forecast_filter_chart_months(
     hide_zero_months: bool,
     min_rub: float = None,
 ) -> pd.DataFrame:
-    """Фильтр месяцев для графика: все нули или только краевые пустые месяцы."""
+    """Фильтр месяцев для графика: нули и «пыль» слева (0.2 млн при пике 300)."""
     if df is None or getattr(df, "empty", True):
         return df
     thr = float(_FINANCE_CHART_MIN_MONTH_RUB if min_rub is None else min_rub)
@@ -40379,13 +40457,146 @@ def _forecast_filter_chart_months(
     pl = pd.to_numeric(out["bdds_plan_msp"], errors="coerce").fillna(0.0)
     fc = pd.to_numeric(out["bdds_fact"], errors="coerce").fillna(0.0)
     fr = pd.to_numeric(out["bdds_forecast"], errors="coerce").fillna(0.0)
-    active = (pl.abs() + fc.abs() + fr.abs()) >= thr
+    tot = pl.abs() + fc.abs() + fr.abs()
+    active = tot >= thr
     if hide_zero_months:
-        return out.loc[active].reset_index(drop=True)
+        kept = out.loc[active]
+        if kept.empty:
+            return kept.reset_index(drop=True)
+        peak = float(
+            np.nanmax(
+                np.concatenate(
+                    [
+                        pl.loc[kept.index].abs().to_numpy(),
+                        fc.loc[kept.index].abs().to_numpy(),
+                        fr.loc[kept.index].abs().to_numpy(),
+                    ]
+                )
+            )
+            or 0.0
+        )
+        # Иначе слева волоски без подписей, а шкала уезжает вверх по поздним месяцам.
+        rel_thr = max(thr, peak * 0.015)
+        return out.loc[tot >= rel_thr].reset_index(drop=True)
     if not bool(active.any()):
         return out
     idx = np.flatnonzero(active.to_numpy())
     return out.iloc[int(idx[0]) : int(idx[-1]) + 1].reset_index(drop=True)
+
+
+def _finance_force_grouped_bar_annotations(
+    fig: go.Figure,
+    *,
+    min_abs: float = 0.05,
+    unit_suffix: str = " млн. руб.",
+) -> go.Figure:
+    """Подписи над grouped bar через annotations — не зависят от bar.text/sanitize."""
+    if fig is None:
+        return fig
+    try:
+        bars = [
+            tr
+            for tr in (fig.data or [])
+            if getattr(tr, "type", None) == "bar" or type(tr).__name__ == "Bar"
+        ]
+    except Exception:
+        return fig
+    if not bars:
+        return fig
+    n_ser = len(bars)
+    lbl_color = _fin_chart_label_color()
+    suf = str(unit_suffix or "")
+    anns: list[dict] = []
+    # Пиксельный сдвиг внутри группы (при ~880px на категорию и 3–4 серии).
+    slot_px = 52.0
+    for s_idx, tr in enumerate(bars):
+        xs = list(getattr(tr, "x", None) or [])
+        ys = list(getattr(tr, "y", None) or [])
+        raw_txt = getattr(tr, "text", None)
+        try:
+            texts = list(raw_txt) if raw_txt is not None else []
+        except Exception:
+            texts = []
+        # Цвет подписи: outsidetextfont / textfont / дефолт; per-point — по индексу.
+        tf = getattr(tr, "outsidetextfont", None) or getattr(tr, "textfont", None)
+        base_color = lbl_color
+        per_colors = None
+        try:
+            if tf is not None and getattr(tf, "color", None) is not None:
+                c = tf.color
+                if isinstance(c, (list, tuple)):
+                    per_colors = list(c)
+                else:
+                    base_color = c
+        except Exception:
+            pass
+        xshift = (s_idx - (n_ser - 1) / 2.0) * slot_px
+        for i, (x, y) in enumerate(zip(xs, ys)):
+            try:
+                yf = float(y)
+            except (TypeError, ValueError):
+                continue
+            if not np.isfinite(yf) or abs(yf) < float(min_abs):
+                continue
+            t = ""
+            if i < len(texts) and texts[i] is not None and str(texts[i]).strip():
+                t = str(texts[i]).strip()
+            else:
+                t = f"{yf:.1f}"
+            if not t:
+                continue
+            if suf and "млн" not in t.casefold():
+                t = f"{t}{suf}"
+            col = base_color
+            if per_colors is not None and i < len(per_colors):
+                col = per_colors[i]
+            # Прозрачные столбцы отклонения — без подписи.
+            try:
+                mc = getattr(tr, "marker", None)
+                mcol = getattr(mc, "color", None) if mc is not None else None
+                if isinstance(mcol, (list, tuple)) and i < len(mcol):
+                    if str(mcol[i]).startswith("rgba(0,0,0,0)"):
+                        continue
+            except Exception:
+                pass
+            anns.append(
+                dict(
+                    x=x,
+                    y=yf,
+                    text=t,
+                    showarrow=False,
+                    xref="x",
+                    yref="y",
+                    xanchor="center",
+                    yanchor="bottom",
+                    yshift=6,
+                    xshift=float(xshift),
+                    font=dict(size=11, color=col, family="Arial, Helvetica, sans-serif"),
+                    bgcolor="rgba(255,255,255,0.65)",
+                    borderpad=1,
+                )
+            )
+    if not anns:
+        return fig
+    try:
+        prev = list(fig.layout.annotations or [])
+    except Exception:
+        prev = []
+    keep: list = []
+    for a in prev:
+        try:
+            ys = a.get("yshift") if isinstance(a, dict) else getattr(a, "yshift", None)
+            sa = a.get("showarrow") if isinstance(a, dict) else getattr(a, "showarrow", True)
+            meta = a.get("meta") if isinstance(a, dict) else getattr(a, "meta", None)
+            if meta == "bi-bar-label" or (ys == 6 and sa is False):
+                continue
+        except Exception:
+            pass
+        keep.append(a)
+    for a in anns:
+        a["meta"] = "bi-bar-label"
+    fig.update_layout(annotations=list(keep) + anns)
+    return fig
 
 
 def _forecast_financier_status_dataset(
@@ -40748,9 +40959,17 @@ def _render_forecast_lot_editor_widgets(
         _c = st.columns([1.25, 1.35, 0.95, 0.95, 1.05, 1.0, 0.55, 0.55, 0.55], gap="small")
         with _c[0]:
             _lot_short = _lot[:48] + ("…" if len(_lot) > 48 else "")
+            try:
+                from dashboards.light_theme import is_light_preview_active
+
+                _lot_clr = "#111827" if is_light_preview_active() else "#f1f5f9"
+            except Exception:
+                _lot_clr = "#f1f5f9"
             st.markdown(
-                f'<div class="fc-fc-lot-name" title="{html_module.escape(_lot, quote=True)}">'
-                f"{html_module.escape(_lot_short)}</div>",
+                f'<p class="fc-fc-lot-name" title="{html_module.escape(_lot, quote=True)}" '
+                f'style="color:{_lot_clr}!important;-webkit-text-fill-color:{_lot_clr}!important;'
+                f'font-size:13px;font-weight:600;margin:8px 0 0;line-height:1.35;'
+                f'word-break:break-word;">{html_module.escape(_lot_short)}</p>',
                 unsafe_allow_html=True,
             )
         with _c[1]:
@@ -41146,7 +41365,8 @@ def dashboard_forecast_budget(df):
                 "Правки в таблице лотов: **Администратор**, **Суперадминистратор**, **РП** или **Финансист**."
             )
 
-        _data_key = f"forecast_edit_data_v8_{_npk_fc}"
+        _data_key = f"forecast_edit_data_v9_{_npk_fc}"
+        _sig_key = f"forecast_edit_src_sig_v9_{_npk_fc}"
         _req_cols = (
             "Раздел",
             "Лот",
@@ -41159,11 +41379,17 @@ def dashboard_forecast_budget(df):
             "B, %",
             "C, %",
         )
+        _src_bp = float(pd.to_numeric(project_df.get("budget plan"), errors="coerce").fillna(0.0).sum())
+        _src_bf = float(pd.to_numeric(project_df.get("budget fact"), errors="coerce").fillna(0.0).sum())
+        _src_sig = (len(project_df), round(_src_bp, 2), round(_src_bf, 2))
 
         def _fc_reset_editor_data() -> None:
             st.session_state[_data_key] = _build_forecast_edit_frame(project_df)
+            st.session_state[_sig_key] = _src_sig
 
         if _data_key not in st.session_state:
+            _fc_reset_editor_data()
+        elif st.session_state.get(_sig_key) != _src_sig:
             _fc_reset_editor_data()
         elif len(st.session_state[_data_key]) != len(project_df):
             _fc_reset_editor_data()
@@ -41197,12 +41423,29 @@ def dashboard_forecast_budget(df):
                     f"(скрыто **{_hidden_struct_fc}** служебных узлов MSP без сумм — на график не влияет)."
                 )
             st.checkbox(
-                "Показать служебные строки (уровень ≤2, без БДДС план/факт)",
+                "Показать строки без БДДС план/факт",
                 key=_show_struct_key,
-                help="Корень проекта и блоки иерархии. Расчёт всегда по полному набору строк MSP.",
+                help="По умолчанию в редакторе только лоты с суммами из 1С/файла. "
+                "Расчёт графика всегда по полному набору строк.",
             )
-            _page_orig_idx = _visible_idx_fc
+            # Сначала лоты с наибольшими суммами — иначе сверху «пустые» WBS.
+            _bp_vis = pd.to_numeric(
+                _edit_df_live["БДДС план (утверждённый), млн руб."], errors="coerce"
+            ).fillna(0.0)
+            _bf_vis = pd.to_numeric(
+                _edit_df_live["БДДС факт, млн руб."], errors="coerce"
+            ).fillna(0.0)
+            _score_vis = (_bp_vis + _bf_vis).to_numpy()
+            _page_orig_idx = sorted(
+                _visible_idx_fc,
+                key=lambda i: (-float(_score_vis[i]), str(_edit_df_live.iloc[i].get("Лот", ""))),
+            )
             _slice_df = _edit_df_live.iloc[_page_orig_idx].copy().reset_index(drop=True)
+            if _n_lots_fc == 0:
+                st.warning(
+                    "Нет лотов с суммами БДДС. Включите «Показать строки без БДДС план/факт» "
+                    "или нажмите «Сбросить таблицу к данным файла» / проверьте обороты 1С."
+                )
             st.caption(
                 f"Лотов **{_n_lots_fc}** в редакторе (всего в проекте {_n_lots_all_fc})."
             )
@@ -41443,7 +41686,8 @@ def dashboard_forecast_budget(df):
             )
             or 0.0
         )
-        _lbl_floor_mln = max(_lbl_max_fc / 1e6 * 0.02, 0.05)
+        # Низкий порог: подписи нужны и на средних столбцах (не только на пиках).
+        _lbl_floor_mln = max(_lbl_max_fc / 1e6 * 0.002, 0.05)
         _plan_txt_fc = _finance_bar_text_mln_rub(
             _chart_df["bdds_plan_msp"], min_abs_mln=_lbl_floor_mln, decimals=1, unit_suffix=" млн. руб."
         )
@@ -41453,6 +41697,8 @@ def dashboard_forecast_budget(df):
         _frc_txt_fc = _finance_bar_text_mln_rub(
             _chart_df["bdds_forecast"], min_abs_mln=_lbl_floor_mln, decimals=1, unit_suffix=" млн. руб."
         )
+        # Запасной texttemplate: если text/sanitize потеряют подписи — Plotly всё равно нарисует y.
+        _fc_txt_font = dict(size=_tfs_out_fc, color=_bar_lbl_fc, family="Arial, Helvetica, sans-serif")
 
         fig_fc = go.Figure()
         x_fc = _chart_df["Период"].astype(str)
@@ -41463,10 +41709,13 @@ def dashboard_forecast_budget(df):
                 name="БДДС план",
                 marker_color="#2E86AB",
                 text=_plan_txt_fc,
+                texttemplate="%{text}",
                 textposition="outside",
                 textangle=0,
                 cliponaxis=False,
-                textfont=dict(size=_tfs_out_fc, color=_bar_lbl_fc),
+                constraintext="none",
+                textfont=_fc_txt_font,
+                outsidetextfont=_fc_txt_font,
                 customdata=_chart_df["bdds_plan_msp"].apply(_fmt_hover1),
                 hovertemplate="<b>%{x}</b><br>БДДС план: %{customdata}<extra></extra>",
             )
@@ -41478,10 +41727,13 @@ def dashboard_forecast_budget(df):
                 name="БДДС факт",
                 marker_color="#A23B72",
                 text=_fact_txt_fc,
+                texttemplate="%{text}",
                 textposition="outside",
                 textangle=0,
                 cliponaxis=False,
-                textfont=dict(size=_tfs_out_fc, color=_bar_lbl_fc),
+                constraintext="none",
+                textfont=_fc_txt_font,
+                outsidetextfont=_fc_txt_font,
                 customdata=_chart_df["bdds_fact"].apply(_fmt_hover1),
                 hovertemplate="<b>%{x}</b><br>БДДС факт: %{customdata}<extra></extra>",
             )
@@ -41493,10 +41745,13 @@ def dashboard_forecast_budget(df):
                 name="БДДС прогноз",
                 marker_color="#F18F01",
                 text=_frc_txt_fc,
+                texttemplate="%{text}",
                 textposition="outside",
                 textangle=0,
                 cliponaxis=False,
-                textfont=dict(size=_tfs_out_fc, color=_bar_lbl_fc),
+                constraintext="none",
+                textfont=_fc_txt_font,
+                outsidetextfont=_fc_txt_font,
                 customdata=_chart_df["bdds_forecast"].apply(_fmt_hover1),
                 hovertemplate="<b>%{x}</b><br>БДДС прогноз: %{customdata}<extra></extra>",
             )
@@ -41526,10 +41781,13 @@ def dashboard_forecast_budget(df):
                     name=_dev_label_fc,
                     marker_color=_dev_bar_colors,
                     text=_dev_txt_all,
+                    texttemplate="%{text}",
                     textposition="outside",
                     textangle=0,
                     cliponaxis=False,
+                    constraintext="none",
                     textfont=dict(size=_tfs_out_fc, color=_dev_txt_colors),
+                    outsidetextfont=dict(size=_tfs_out_fc, color=_dev_txt_colors),
                     customdata=_dev_signed.map(
                         lambda v: format_million_rub(float(v) * 1e6) if pd.notna(v) else ""
                     ),
@@ -41571,9 +41829,9 @@ def dashboard_forecast_budget(df):
                     if np.isfinite(_dev_neg_min) and _dev_neg_min < 0:
                         _ymin_fc = _dev_neg_min * 1.15
             if np.isfinite(_ymax_fc) and (_ymax_fc > 0 or _ymin_fc < 0):
-                pad = max(abs(_ymax_fc), abs(_ymin_fc), 1e-6) * 0.28
+                pad = max(abs(_ymax_fc), abs(_ymin_fc), 1e-6) * 0.35
                 span = float(max(_ymax_fc - _ymin_fc, 1e-6))
-                head = max(span * 0.32, abs(_ymax_fc) * 0.2, 0.75)
+                head = max(span * 0.40, abs(_ymax_fc) * 0.28, 1.0)
                 foot = pad if _ymin_fc >= 0 else max(pad, abs(_ymin_fc) * 0.24)
                 _dtick_fc, _ = _finance_bar_yaxis_tight(
                     max(_ymax_fc, abs(_ymin_fc)), outside_labels=True, tick_stride=1
@@ -41592,8 +41850,8 @@ def dashboard_forecast_budget(df):
                 )
         try:
             fig_fc.update_layout(
-                uniformtext=dict(minsize=7, mode="hide"),
-                margin=dict(t=110),
+                uniformtext=dict(minsize=5, mode="show"),
+                margin=dict(t=150),
             )
         except Exception:
             pass
@@ -41606,6 +41864,7 @@ def dashboard_forecast_budget(df):
         except Exception:
             pass
         fig_fc = apply_chart_background(fig_fc)
+        _apply_finance_light_preview_chart_colors(fig_fc)
         st.caption(
             "Подписи над столбцами (млн руб). Длинный ряд — **прокрутка вправо** в полосе под графиком. "
             "Полные значения — в подсказке при наведении."

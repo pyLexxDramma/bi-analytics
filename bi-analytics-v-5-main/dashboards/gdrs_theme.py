@@ -1155,17 +1155,35 @@ def gdrs_apply_grouped_bar_labels(
     theme: GdrsTheme,
     xs: list,
     series: list[tuple[list, Any]],
+    *,
+    bar_indices: list[int] | None = None,
 ) -> Any:
     """Подписи строго над столбцами — нативный bar.text (Plotly сам центрирует в group)."""
     sz = gdrs_bar_label_size(theme)
     for seq, (texts, color) in enumerate(series):
-        if seq >= len(fig.data):
+        if bar_indices is not None:
+            if seq >= len(bar_indices):
+                break
+            ti = int(bar_indices[seq])
+        else:
+            ti = seq
+        if ti >= len(fig.data):
             break
-        tr = fig.data[seq]
+        tr = fig.data[ti]
         if getattr(tr, "type", None) != "bar":
             continue
         ys = list(tr.y) if tr.y is not None else []
         label_texts = _gdrs_bar_label_texts(list(texts), ys)
+        # Если заранее переданные text пустые, но y есть — подпись из y.
+        if not any(str(t).strip() for t in label_texts) and ys:
+            label_texts = []
+            for y in ys:
+                try:
+                    yf = float(y)
+                except (TypeError, ValueError):
+                    label_texts.append("")
+                    continue
+                label_texts.append(f"{yf:.1f}" if abs(yf) >= 0.05 else "")
         if isinstance(color, (list, tuple)):
             cols = list(color)
         else:
@@ -1185,21 +1203,30 @@ def gdrs_apply_grouped_bar_labels(
 
 
 def gdrs_apply_bar_outside_labels(fig: Any, theme: GdrsTheme) -> Any:
-    """Совместимость: собрать подписи из bar.text и перевести в annotations."""
-    bar_idx = [i for i, tr in enumerate(fig.data) if getattr(tr, "type", None) == "bar" and tr.text]
+    """Подписи bar: нормализует text/outsidetextfont (не затирает text при сбое)."""
+    bar_idx: list[int] = []
+    for i, tr in enumerate(fig.data):
+        if getattr(tr, "type", None) != "bar":
+            continue
+        # Не используем bool(tr.text): у ndarray это ValueError.
+        raw = getattr(tr, "text", None)
+        if raw is None:
+            continue
+        try:
+            texts = list(raw)
+        except Exception:
+            texts = [raw]
+        bar_idx.append(i)
     if not bar_idx:
-        fig.update_traces(
-            selector=dict(type="bar"),
-            text=None,
-            textposition=None,
-            texttemplate=None,
-        )
         return fig
-    xs = list(fig.data[bar_idx[0]].x)
+    xs = list(fig.data[bar_idx[0]].x) if fig.data[bar_idx[0]].x is not None else []
     series: list[tuple[list, Any]] = []
     for ti in bar_idx:
         tr = fig.data[ti]
-        texts = list(tr.text) if tr.text is not None else []
+        try:
+            texts = list(tr.text) if tr.text is not None else []
+        except Exception:
+            texts = []
         col = theme.text
         try:
             if tr.textfont is not None and getattr(tr.textfont, "color", None) is not None:
@@ -1207,7 +1234,7 @@ def gdrs_apply_bar_outside_labels(fig: Any, theme: GdrsTheme) -> Any:
         except Exception:
             pass
         series.append((texts, col))
-    return gdrs_apply_grouped_bar_labels(fig, theme, xs, series)
+    return gdrs_apply_grouped_bar_labels(fig, theme, xs, series, bar_indices=bar_idx)
 
 
 def gdrs_sanitize_bar_text_labels(fig: Any, theme: GdrsTheme) -> Any:

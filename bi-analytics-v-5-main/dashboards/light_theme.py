@@ -1229,6 +1229,22 @@ html body.gdrs-light-preview .fc-fc-lot-hdr-stick {
 html body.gdrs-light-preview .fc-fc-lot-hdr-stick th {
   color: #111827 !important;
 }
+html body.gdrs-light-preview .fc-fc-lot-name,
+html body.gdrs-light-preview .fc-fc-lot-name *,
+html body.gdrs-light-preview .main [data-testid="column"] [data-testid="stMarkdownContainer"] .fc-fc-lot-name,
+html body.gdrs-light-preview .main [data-testid="column"] [data-testid="stMarkdownContainer"] .fc-fc-lot-name *,
+html body.gdrs-light-preview .main [data-testid="stHorizontalBlock"] [data-testid="stMarkdownContainer"] .fc-fc-lot-name,
+html body.gdrs-light-preview .main [data-testid="stHorizontalBlock"] [data-testid="stMarkdownContainer"] .fc-fc-lot-name *,
+html body.gdrs-light-preview div[data-testid="stVerticalBlockBorderWrapper"] [data-testid="stMarkdownContainer"] .fc-fc-lot-name,
+html body.gdrs-light-preview div[data-testid="stVerticalBlockBorderWrapper"] [data-testid="stMarkdownContainer"] .fc-fc-lot-name * {
+  color: #111827 !important;
+  -webkit-text-fill-color: #111827 !important;
+}
+html body.gdrs-light-preview div[data-testid="stVerticalBlockBorderWrapper"] [data-testid="stText"],
+html body.gdrs-light-preview div[data-testid="stVerticalBlockBorderWrapper"] [data-testid="stText"] p {
+  color: #111827 !important;
+  -webkit-text-fill-color: #111827 !important;
+}
 html body.gdrs-light-preview [data-baseweb="input"] input,
 html body.gdrs-light-preview [data-testid="stTextInput"] input,
 html body.gdrs-light-preview .stTextInput input,
