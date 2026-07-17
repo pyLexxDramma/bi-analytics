@@ -6264,7 +6264,9 @@ def _deviations_building_select_options(
     reason_session_key: str = "devcombo_reason",
     building_col: str | None = None,
 ) -> list[str]:
-    """Строения из строк макета — тот же срез, что у таблицы (без фильтра «Строение»)."""
+    """Полный список задач уровня 3 по срезу проект+блок (как у ганта), не только из макета отклонений."""
+    # period/reason оставлены в сигнатуре для совместимости вызовов — на опции не влияют.
+    _ = period_session_key, reason_session_key
     if df_full is None or getattr(df_full, "empty", True):
         return []
     if building_col is None:
@@ -6277,28 +6279,37 @@ def _deviations_building_select_options(
     if sel_proj != "Все" and "project name" in work.columns:
         work = _deviations_filter_df_by_project_name(work, sel_proj)
     sel_block = st.session_state.get(block_state_key, "Все")
-    work = _deviations_apply_block_building_filters(
-        work, sel_block, "Все", building_col
+    # У «Ковенантов» в срезе блока часто нет L3 — список строений по проекту целиком.
+    _is_cov_block = (
+        str(sel_block).strip() != "Все"
+        and any(
+            tok in str(sel_block).lower()
+            for tok in ("ковенант", "ковен", "covenant", "coven")
+        )
     )
-    work = _deviations_apply_snapshot_month_filter(
-        work, session_key=period_session_key, dynamics=False
-    )
-    work = _deviations_apply_reason_filter(work, session_key=reason_session_key)
-    _pt_en = _deviations_period_type_en_from_ru(
-        st.session_state.get("dynamics_period", "Месяц")
-    )
-    work = _deviations_apply_report_period_filter(
-        work, period_type_en=_pt_en
-    )
-    maket = _deviations_maket_prepare_df(work)
-    if maket.empty:
+    if not _is_cov_block:
+        work = _deviations_apply_block_building_filters(
+            work, sel_block, "Все", building_col
+        )
+    if work.empty:
         return []
-    raw: list[str] = []
-    for _, row in maket.iterrows():
-        lbl = _deviations_maket_building_label(row, maket, building_col)
-        if lbl:
-            raw.append(lbl)
-    return _gantt_dedupe_block_filter_values(raw)
+
+    level_col = _deviations_resolve_level_col_like_gantt(work)
+    task_col = _deviations_resolve_task_col(work)
+    if level_col and task_col:
+        opts = _deviations_l3_building_option_labels(work, level_col, task_col)
+        if opts:
+            return opts
+
+    opts = _gantt_building_filter_values_for_df(
+        work,
+        level_col=level_col,
+        task_col=task_col,
+        building_col=(
+            building_col if building_col and building_col in work.columns else None
+        ),
+    )
+    return opts
 
 
 def _deviations_render_building_selectbox(
