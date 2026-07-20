@@ -357,6 +357,35 @@ def sync_light_preview_theme(st) -> None:
       "html body.gdrs-light-preview div[data-baseweb=\\"popover\\"] {",
       "background:#fff!important;color:#111827!important;color-scheme:light!important;",
       "border:1px solid #cbd5e1!important;}",
+      "html body.gdrs-light-preview div[data-baseweb=\\"popover\\"] > div,",
+      "html body.gdrs-light-preview div[data-baseweb=\\"popover\\"] [data-testid=\\"stVerticalBlock\\"],",
+      "html body.gdrs-light-preview div[data-baseweb=\\"popover\\"] [data-testid=\\"stVerticalBlockBorderWrapper\\"],",
+      "html body.gdrs-light-preview div[data-baseweb=\\"popover\\"] [data-testid=\\"stElementContainer\\"],",
+      "html body.gdrs-light-preview [data-testid=\\"stPopoverBody\\"],",
+      "html body.gdrs-light-preview [data-testid=\\"stPopoverBody\\"] [data-testid=\\"stVerticalBlock\\"] {",
+      "background:#fff!important;background-color:#fff!important;color:#111827!important;",
+      "color-scheme:light!important;}",
+      "html body.gdrs-light-preview [data-testid=\\"stPopover\\"] > button,",
+      "html body.gdrs-light-preview div[data-baseweb=\\"popover\\"] [data-testid=\\"stDownloadButton\\"] button,",
+      "html body.gdrs-light-preview div[data-baseweb=\\"popover\\"] [data-testid=\\"stDownloadButton\\"] a,",
+      "html body.gdrs-light-preview div[data-baseweb=\\"popover\\"] [data-testid=\\"stButton\\"] button,",
+      "html body.gdrs-light-preview [data-testid=\\"stPopoverBody\\"] [data-testid=\\"stDownloadButton\\"] button,",
+      "html body.gdrs-light-preview [data-testid=\\"stPopoverBody\\"] [data-testid=\\"stDownloadButton\\"] a,",
+      "html body.gdrs-light-preview [data-testid=\\"stPopoverBody\\"] [data-testid=\\"stButton\\"] button {",
+      "background:#f8fafc!important;background-color:#f8fafc!important;",
+      "color:#111827!important;-webkit-text-fill-color:#111827!important;",
+      "border:1px solid #cbd5e1!important;font-weight:600!important;}",
+      "html body.gdrs-light-preview [data-testid=\\"stPopover\\"] > button:hover,",
+      "html body.gdrs-light-preview div[data-baseweb=\\"popover\\"] [data-testid=\\"stDownloadButton\\"] button:hover,",
+      "html body.gdrs-light-preview div[data-baseweb=\\"popover\\"] [data-testid=\\"stDownloadButton\\"] a:hover,",
+      "html body.gdrs-light-preview [data-testid=\\"stPopoverBody\\"] [data-testid=\\"stDownloadButton\\"] button:hover,",
+      "html body.gdrs-light-preview [data-testid=\\"stPopoverBody\\"] [data-testid=\\"stDownloadButton\\"] a:hover {",
+      "background:#e5e7eb!important;color:#111827!important;border-color:#94a3b8!important;}",
+      "html body.gdrs-light-preview div[data-baseweb=\\"popover\\"] [data-testid=\\"stDownloadButton\\"] button *,",
+      "html body.gdrs-light-preview div[data-baseweb=\\"popover\\"] [data-testid=\\"stDownloadButton\\"] a *,",
+      "html body.gdrs-light-preview [data-testid=\\"stPopoverBody\\"] [data-testid=\\"stDownloadButton\\"] button *,",
+      "html body.gdrs-light-preview [data-testid=\\"stPopover\\"] > button * {",
+      "color:#111827!important;-webkit-text-fill-color:#111827!important;}",
       "html body.gdrs-light-preview div[data-baseweb=\\"popover\\"] [data-baseweb=\\"calendar\\"],",
       "html body.gdrs-light-preview div[data-baseweb=\\"popover\\"] [data-baseweb=\\"datepicker\\"],",
       "html body.gdrs-light-preview div[data-baseweb=\\"popover\\"] [role=\\"grid\\"] {",
@@ -1084,13 +1113,66 @@ html body.gdrs-light-preview .bi-filters-scope [data-testid="stDateInput"] svg {
   color: #475569 !important;
 }
 
-/* Popover календаря (portaled к body) */
+/* Popover календаря / «Скачать таблицу» (portaled к body) */
 html.gdrs-light-preview div[data-baseweb="popover"],
 html body.gdrs-light-preview div[data-baseweb="popover"] {
   background-color: #ffffff !important;
   border: 1px solid #cbd5e1 !important;
   box-shadow: 0 10px 28px rgba(15, 23, 42, 0.14) !important;
   color-scheme: light !important;
+}
+/* Внутренний блок Streamlit в popover (тёмная тема иначе даёт чёрный фон) */
+html.gdrs-light-preview div[data-baseweb="popover"] > div,
+html body.gdrs-light-preview div[data-baseweb="popover"] > div,
+html body.gdrs-light-preview div[data-baseweb="popover"] [data-testid="stVerticalBlock"],
+html body.gdrs-light-preview div[data-baseweb="popover"] [data-testid="stVerticalBlockBorderWrapper"],
+html body.gdrs-light-preview div[data-baseweb="popover"] [data-testid="stElementContainer"],
+html body.gdrs-light-preview [data-testid="stPopoverBody"],
+html body.gdrs-light-preview [data-testid="stPopoverBody"] [data-testid="stVerticalBlock"],
+html body.gdrs-light-preview [data-testid="stPopoverBody"] [data-testid="stVerticalBlockBorderWrapper"],
+html body.gdrs-light-preview [data-testid="stPopoverBody"] [data-testid="stElementContainer"] {
+  background-color: #ffffff !important;
+  background: #ffffff !important;
+  color: #111827 !important;
+  color-scheme: light !important;
+}
+html body.gdrs-light-preview [data-testid="stPopover"] > button,
+html body.gdrs-light-preview [data-testid="stPopover"] button[data-testid^="stBaseButton"],
+html body.gdrs-light-preview div[data-baseweb="popover"] [data-testid="stDownloadButton"] button,
+html body.gdrs-light-preview div[data-baseweb="popover"] [data-testid="stDownloadButton"] a,
+html body.gdrs-light-preview div[data-baseweb="popover"] [data-testid="stButton"] button,
+html body.gdrs-light-preview div[data-baseweb="popover"] button[data-testid^="stBaseButton"],
+html body.gdrs-light-preview [data-testid="stPopoverBody"] [data-testid="stDownloadButton"] button,
+html body.gdrs-light-preview [data-testid="stPopoverBody"] [data-testid="stDownloadButton"] a,
+html body.gdrs-light-preview [data-testid="stPopoverBody"] [data-testid="stButton"] button,
+html body.gdrs-light-preview [data-testid="stPopoverBody"] button[data-testid^="stBaseButton"] {
+  background-color: #f8fafc !important;
+  background: #f8fafc !important;
+  color: #111827 !important;
+  -webkit-text-fill-color: #111827 !important;
+  border: 1px solid #cbd5e1 !important;
+  font-weight: 600 !important;
+}
+html body.gdrs-light-preview [data-testid="stPopover"] > button:hover,
+html body.gdrs-light-preview div[data-baseweb="popover"] [data-testid="stDownloadButton"] button:hover,
+html body.gdrs-light-preview div[data-baseweb="popover"] [data-testid="stDownloadButton"] a:hover,
+html body.gdrs-light-preview div[data-baseweb="popover"] [data-testid="stButton"] button:hover,
+html body.gdrs-light-preview [data-testid="stPopoverBody"] [data-testid="stDownloadButton"] button:hover,
+html body.gdrs-light-preview [data-testid="stPopoverBody"] [data-testid="stDownloadButton"] a:hover,
+html body.gdrs-light-preview [data-testid="stPopoverBody"] [data-testid="stButton"] button:hover {
+  background-color: #e5e7eb !important;
+  background: #e5e7eb !important;
+  color: #111827 !important;
+  -webkit-text-fill-color: #111827 !important;
+  border-color: #94a3b8 !important;
+}
+html body.gdrs-light-preview div[data-baseweb="popover"] [data-testid="stDownloadButton"] button *,
+html body.gdrs-light-preview div[data-baseweb="popover"] [data-testid="stDownloadButton"] a *,
+html body.gdrs-light-preview [data-testid="stPopoverBody"] [data-testid="stDownloadButton"] button *,
+html body.gdrs-light-preview [data-testid="stPopoverBody"] [data-testid="stDownloadButton"] a *,
+html body.gdrs-light-preview [data-testid="stPopover"] > button * {
+  color: #111827 !important;
+  -webkit-text-fill-color: #111827 !important;
 }
 html.gdrs-light-preview div[data-baseweb="popover"] [data-baseweb="calendar"] > div:first-child,
 html.gdrs-light-preview div[data-baseweb="popover"] [data-baseweb="datepicker"] > div:first-child,

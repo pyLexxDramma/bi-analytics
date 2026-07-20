@@ -14046,8 +14046,14 @@ def dashboard_budget_by_period(df):
 
             with col1:
                 if "project name" in filtered_df.columns:
-                    _project_opts = _unique_project_labels_for_select(
-                        filtered_df["project name"]
+                    from dashboards.finance_from_1c import (
+                        restrict_project_filter_labels_to_finance_data,
+                    )
+
+                    _project_opts = restrict_project_filter_labels_to_finance_data(
+                        _unique_project_labels_for_select(filtered_df["project name"]),
+                        filtered_df,
+                        kind="bdds",
                     )
                     selected_projects, _bdds_all_projects = project_filter_multiselect(st, _project_opts,
                         key="budget_project",
@@ -16147,8 +16153,32 @@ def dashboard_bdr(df):
         with filters_selectors(st):
             col1, col2, col3, col4, _col5 = st.columns(5, gap="small")
             with col1:
-                if "project name" in df_src.columns:
-                    projects = ["Все"] + _unique_project_labels_for_select(df_src["project name"])
+                _bdr_opts_src = (
+                    df_work
+                    if (
+                        df_work is not None
+                        and not getattr(df_work, "empty", True)
+                        and "project name" in df_work.columns
+                    )
+                    else df_src
+                )
+                if "project name" in getattr(_bdr_opts_src, "columns", []):
+                    from dashboards.finance_from_1c import (
+                        restrict_project_filter_labels_to_finance_data,
+                    )
+
+                    _bdr_proj_opts = restrict_project_filter_labels_to_finance_data(
+                        _unique_project_labels_for_select(_bdr_opts_src["project name"]),
+                        _bdr_opts_src,
+                        kind="bdr",
+                    )
+                    projects = ["Все"] + list(_bdr_proj_opts)
+                    try:
+                        _cur_bdr = str(st.session_state.get("bdr_project") or "").strip()
+                        if _cur_bdr and _cur_bdr != "Все" and _cur_bdr not in projects:
+                            st.session_state["bdr_project"] = "Все"
+                    except Exception:
+                        pass
                     selected_project = st.selectbox(
                         "Проект", projects, key="bdr_project"
                     )

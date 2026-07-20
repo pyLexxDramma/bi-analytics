@@ -1003,6 +1003,101 @@ def try_synthetic_bdr_from_1c_dannye(
     return odf
 
 
+def restrict_project_filter_labels_to_finance_data(
+    labels: list[str],
+    msp_df: Optional[pd.DataFrame] = None,
+    *,
+    kind: str = "bdds",
+) -> list[str]:
+    """
+    Оставить в фильтре БДДС/БДР только проекты с ненулевыми суммами:
+    в колонках MSP и/или в синтетике из ``reference_1c_dannye``.
+
+    Иначе в списке остаются MSP-проекты без оборотов 1С (например «Новорижский»).
+    Если ни MSP, ни 1С не дают сумм — возвращает labels без изменений.
+    """
+    if not labels:
+        return list(labels or [])
+
+    from dashboards._renderers import (
+        _project_filter_norm_key,
+        _project_norm_key_matches_msp_keys,
+    )
+
+    data_keys: set[str] = set()
+    kind_l = (kind or "bdds").strip().lower()
+
+    if msp_df is not None and not getattr(msp_df, "empty", True):
+        if "project name" in msp_df.columns:
+            if kind_l == "bdr":
+                money_cols = [
+                    c
+                    for c in (
+                        "bdr_plan_expense",
+                        "bdr_fact_expense",
+                        "bdr_income",
+                        "bdr_expense",
+                        "доходы",
+                        "расходы",
+                        "доход",
+                        "расход",
+                        "income",
+                        "expense",
+                    )
+                    if c in msp_df.columns
+                ]
+            else:
+                money_cols = [
+                    c
+                    for c in ("budget plan", "budget fact")
+                    if c in msp_df.columns
+                ]
+            if money_cols:
+                tmp = msp_df[["project name", *money_cols]].copy()
+                amt = None
+                for c in money_cols:
+                    s = pd.to_numeric(tmp[c], errors="coerce").fillna(0.0).abs()
+                    amt = s if amt is None else (amt + s)
+                tmp["_amt"] = amt if amt is not None else 0.0
+                for pname, total in (
+                    tmp.groupby("project name", dropna=False)["_amt"].sum().items()
+                ):
+                    if float(total) <= 0.0:
+                        continue
+                    pk = _project_filter_norm_key(pname)
+                    if pk:
+                        data_keys.add(pk)
+
+    try:
+        syn = (
+            try_synthetic_bdr_from_1c_dannye()
+            if kind_l == "bdr"
+            else try_synthetic_budget_from_1c_dannye()
+        )
+    except Exception:
+        syn = None
+    if syn is not None and not getattr(syn, "empty", True) and "project name" in syn.columns:
+        for pname in syn["project name"].dropna().unique():
+            pk = _project_filter_norm_key(pname)
+            if pk:
+                data_keys.add(pk)
+
+    if not data_keys:
+        return list(labels)
+
+    out: list[str] = []
+    for lab in labels:
+        s = str(lab).strip()
+        if not s:
+            continue
+        lk = _project_filter_norm_key(s)
+        if not lk:
+            continue
+        if _project_norm_key_matches_msp_keys(lk, data_keys):
+            out.append(s)
+    return out
+
+
 def ensure_budget_frame_with_fallback(
     df: pd.DataFrame,
     *,
