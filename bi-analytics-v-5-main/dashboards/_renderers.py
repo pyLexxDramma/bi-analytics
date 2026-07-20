@@ -17432,6 +17432,28 @@ def _rd_plan_keep_latest_snapshot(
     return out[_keep.to_numpy()].copy()
 
 
+def _rd_plan_cancelled_row_mask(df: pd.DataFrame) -> pd.Series:
+    """RD-01: маска отменённых разделов по ЛЮБОЙ колонке со «статус» в имени.
+
+    В other_*_rd.csv статус лежит то в «Статус», то в «Статус РД» (разные
+    снапшоты), а `_rd_plan_csv_pick_columns` выбирает лишь одну колонку —
+    «отменено» из другой иначе не отсекается (Дмитровский-1: 6 отменённых в
+    «Статус», тогда как pick берёт «Статус РД»).
+    """
+    if df is None or getattr(df, "empty", True):
+        return pd.Series(False, index=getattr(df, "index", pd.RangeIndex(0)))
+    mask = pd.Series(False, index=df.index)
+    for c in df.columns:
+        if "статус" not in str(c).casefold():
+            continue
+        col = df[c]
+        if isinstance(col, pd.DataFrame):
+            col = col.iloc[:, 0]
+        s = col.map(_rd_csv_cell_str).str.casefold()
+        mask = mask | s.str.contains("отмен", na=False) | s.isin({"cancelled", "canceled"})
+    return mask
+
+
 def _rd_plan_csv_sections_df(
     selected_projects: list[str] | None = None,
 ) -> pd.DataFrame:
@@ -17470,6 +17492,16 @@ def _rd_plan_csv_sections_df(
             _cd.ne("")
             & ~_cd.str.lower().isin({"nan", "none", "-", "—", "блок"})
         ].copy()
+    if df.empty:
+        return df
+    # RD-01: отменённые разделы не входят в план (напр. «Дмитровский-1» — 6
+    # строк со статусом «отменено»; без этого «Всего разделов» завышается).
+    # Исключаем ТОЛЬКО отмену — «принят»/«не принят»/«на рассмотрении» и т.п.
+    # остаются в плане. Проверяем ВСЕ колонки со «статус» (отмена бывает в
+    # «Статус», хотя pick выбрал «Статус РД»).
+    _canc = _rd_plan_cancelled_row_mask(df)
+    if bool(_canc.any()):
+        df = df[~_canc].copy()
     if df.empty:
         return df
     df["_plan_dt"] = pd.to_datetime(
@@ -17584,6 +17616,25 @@ def _rd_csv_cell_str(val: Any) -> str:
     s = str(val).strip()
     if s.lower() in ("nan", "none", "<na>", "nat"):
         return ""
+    return s
+
+
+def _rd_format_contract_no(val: Any) -> str:
+    """RD-06: номер договора целым числом — без хвоста «.0» и научной нотации.
+
+    Числовые номера из 1С/DK приходят float («12345.0», «1.2345e+04»);
+    приводим к int-строке. Нечисловые номера («Д-123/45») оставляем как есть.
+    """
+    s = _rd_csv_cell_str(val)
+    if not s:
+        return ""
+    _num = s.replace("\u00a0", "").replace(" ", "").replace(",", ".")
+    try:
+        f = float(_num)
+    except (TypeError, ValueError):
+        return s
+    if f.is_integer():
+        return str(int(f))
     return s
 
 
@@ -18087,10 +18138,11 @@ def _fmt_rd_deviation_days_display(series) -> pd.Series:
 
 def _apply_rd_detail_deviation_columns(tbl: pd.DataFrame) -> pd.DataFrame:
     """Отклонения РД по ТЗ (положит. число = просрочка):
-      • «от даты по договору» = Дата выдачи в производство работ − Дата по
-        договору; при отсутствии даты выдачи — текущая дата;
+      • «от даты по договору» = (Дата выдачи в производство работ, а для
+        невыданных разделов — Прогнозная дата) − Дата по договору; без
+        прогнозной (и без факта) — пусто «—»;
       • «от прогнозной даты» = Дата выдачи в производство работ − Прогнозная
-        дата; при отсутствии прогнозной (или даты выдачи) — текущая дата.
+        дата; для невыданных разделов (нет факта) — пусто «—».
     """
     if tbl is None or getattr(tbl, "empty", True):
         return tbl
@@ -18115,7 +18167,6 @@ def _apply_rd_detail_deviation_columns(tbl: pd.DataFrame) -> pd.DataFrame:
         s = s.where(~s.str.casefold().isin(_empty), other=pd.NA)
         return pd.to_datetime(s, errors="coerce", dayfirst=True, format="mixed")
 
-    today = pd.Timestamp.now().normalize()
     plan_dt = _to_dt(out[plan_col])
     prod_dt = (
         _to_dt(out[prod_col])
@@ -18127,10 +18178,14 @@ def _apply_rd_detail_deviation_columns(tbl: pd.DataFrame) -> pd.DataFrame:
         if fc_col in out.columns
         else pd.Series(pd.NaT, index=out.index)
     )
-    prod_eff = prod_dt.fillna(today)
-    fc_eff = fc_dt.fillna(today)
-    out["Отклонение от даты по договору, дн"] = (prod_eff - plan_dt).dt.days
-    out["Отклонение от прогнозной даты, дн"] = (prod_eff - fc_eff).dt.days
+    _issued = prod_dt.notna()
+    # «От даты по договору»: выдан → факт − договор; не выдан → прогноз − договор
+    # (плановое отставание). Нет ни факта, ни прогноза → NaT → «—».
+    _base_dogovor = prod_dt.where(_issued, fc_dt)
+    out["Отклонение от даты по договору, дн"] = (_base_dogovor - plan_dt).dt.days
+    # «От прогнозной даты»: только по факту выдачи (факт − прогноз); без факта
+    # или без прогноза → NaT → «—».
+    out["Отклонение от прогнозной даты, дн"] = (prod_dt - fc_dt).dt.days
     out["Отклонение, дн"] = out["Отклонение от прогнозной даты, дн"]
     return out
 
@@ -18147,6 +18202,7 @@ _RD_DETAIL_DISPLAY_RENAME = {
 _RD_DETAIL_DISPLAY_ORDER = [
     "Проект",
     "Наименование разделов работ",
+    "Номер договора",
     "Полный шифр",
     "Версия",
     "Статус",
@@ -18213,6 +18269,14 @@ def _rd_detail_prepare_for_display(
                 if c in out.columns
             ]
         )
+    # RD-06: колонку «Номер договора» показываем, только если хотя бы у одного
+    # раздела номер заполнен (иначе — сплошные «—», DK.json не подгружен).
+    if "Номер договора" in out.columns:
+        _cn = out["Номер договора"].map(_rd_format_contract_no).astype(str).str.strip()
+        if _cn.eq("").all():
+            out = out.drop(columns=["Номер договора"])
+        else:
+            out["Номер договора"] = _cn.replace({"": "—"})
     if "Наименование разделов работ" in out.columns:
         out["Наименование разделов работ"] = out["Наименование разделов работ"].map(
             _rd_plan_unglue_section_name
@@ -18253,14 +18317,7 @@ def _build_rd_work_doc_detail_table(
             )
 
     extra_rows: list[dict[str, Any]] = []
-    # Статус-дисплей считаем векторно по всей колонке один раз, а не создаём
-    # pd.Series([...]) на каждую строку внутри цикла (десятки тысяч Series =
-    # основная задержка «Рабочей документации»).
-    if pc.get("status") and pc["status"] in csv_df.columns:
-        _status_disp_list = _rd_plan_status_display_series(csv_df[pc["status"]]).tolist()
-    else:
-        _status_disp_list = None
-    for _pos, (_i, row) in enumerate(csv_df.iterrows()):
+    for _i, row in csv_df.iterrows():
         proj = _rd_csv_cell_str(row.get(pc["proj"], "")) if pc.get("proj") else ""
         cipher = _rd_csv_cell_str(row.get(pc["code"], "")) if pc.get("code") else ""
         sect = _rd_csv_cell_str(row.get(pc["name"], "")) if pc.get("name") else ""
@@ -18279,17 +18336,11 @@ def _build_rd_work_doc_detail_table(
         if mk in matched:
             continue
         has_tessa = bool(full_c and full_c.casefold() in internal_ids)
-        _raw_st = row.get(pc["status"], "") if pc.get("status") and pc["status"] in row.index else ""
-        csv_st = _rd_csv_cell_str(
-            _status_disp_list[_pos]
-            if _status_disp_list is not None
-            else ""
-        )
-        if has_tessa or (
-            csv_st
-            and csv_st.casefold() not in ("не выдан", "не выдано")
-            and not _rd_plan_row_is_not_issued_csv_status(_raw_st)
-        ):
+        # RD-09: показываем ВСЕ разделы плана (любой статус), а не только
+        # «не выдан». Пропускаем лишь те, у кого уже есть карточка TESSA
+        # (её строка пришла из tessa_tbl) — иначе задвоим «полный шифр».
+        # Раздел без карточки TESSA = «Не выдано» (факт по нему не считается).
+        if has_tessa:
             continue
         plan_s = (
             row["_plan_dt"].strftime("%d.%m.%Y")
@@ -18301,10 +18352,16 @@ def _build_rd_work_doc_detail_table(
             if pd.notna(row.get("_fact_dt"))
             else "—"
         )
+        contract_no_csv = (
+            _rd_format_contract_no(row.get(pc["contract"], ""))
+            if pc.get("contract") and pc["contract"] in row.index
+            else ""
+        )
         extra_rows.append(
             {
                 "Проект": proj,
                 "Наименование разделов работ": sect,
+                "Номер договора": contract_no_csv,
                 "Шифр": cipher,
                 "Шифр полный": full_c,
                 "Версия": "",
@@ -18352,23 +18409,18 @@ def _count_rd_fact_to_date_tessa(
         detail = detail.loc[_lbl.isin(section_labels_allowlist)].copy()
     if not detail.empty:
         detail = _drop_rd_detail_empty_rows(detail)
-    if not detail.empty:
-        _prod = (
-            detail["Дата выдачи в производство работ"]
-            .astype(str)
-            .str.strip()
-            .replace({"nan": "", "None": "", "NaT": ""})
-            .ne("")
+    if not detail.empty and "Статус" in detail.columns:
+        # RD-02: факт на текущую дату = разделы РД в статусе «Выдано в
+        # производство работ» + «На рассмотрении у ГИП» (ровно по полю Status
+        # tessa_*_rd.csv). Раньше факт завышался: считались все карточки с
+        # датой выдачи в производство ИЛИ статусом «согласован», а также
+        # CSV-разделы без карточки TESSA — это давало ~428 вместо ~374.
+        _st = detail["Статус"].astype(str).str.strip()
+        _is_prod = _st.eq(_RD_TESSA_STATUS_PRODUCTION)
+        _is_review = _st.eq(_RD_TESSA_STATUS_REVIEW) | _st.str.casefold().str.contains(
+            "рассмотр", na=False
         )
-        _st = detail["Статус"].astype(str).str.strip().str.casefold()
-        _review = _st.str.contains("рассмотр", na=False) | _st.str.contains(
-            "согласован", na=False
-        )
-        if "Статус" in detail.columns:
-            _review = _review | detail["Статус"].map(_tessa_krstate_to_pie_bucket).fillna("").eq(
-                "На рассм."
-            )
-        return float((_prod | _review.fillna(False)).sum())
+        return float((_is_prod | _is_review).sum())
     _stage = _count_tessa_rd_stages(
         selected_projects, section_labels_allowlist=section_labels_allowlist
     )
@@ -18386,6 +18438,8 @@ def _render_rd_working_doc_monthly_and_detail(
     work_df: pd.DataFrame,
     selected_projects: list[str] | None,
     selected_sections: list[str] | None,
+    selected_statuses: list[str] | None = None,
+    status_options: list[str] | None = None,
     metric_mode: str,
     show_forecast_date: bool,
     doc_fk: str,
@@ -18396,6 +18450,16 @@ def _render_rd_working_doc_monthly_and_detail(
     """ТЗ п.2: динамика по месяцам и детальная таблица РД (как на вкладке просрочки)."""
     if work_df is None or getattr(work_df, "empty", True):
         return
+
+    # RD-10: единый классификатор статусов — детальная таблица и круговая
+    # «Исполнение РД» должны показывать один и тот же выбранный статус.
+    _status_allow: set[str] | None = None
+    if (
+        selected_statuses
+        and status_options
+        and set(selected_statuses) != set(status_options)
+    ):
+        _status_allow = _rd_status_filter_expand(selected_statuses)
 
     def _to_numeric_series(series):
         return pd.to_numeric(
@@ -18496,6 +18560,12 @@ def _render_rd_working_doc_monthly_and_detail(
             .str.strip()
         ).str.replace(r"\s+", " ", regex=True).str.strip()
         _tessa_tbl = _tessa_tbl.loc[_lbl_d.isin(_sec_allow)].copy()
+    if _status_allow is not None and "Статус" in _tessa_tbl.columns:
+        _tessa_tbl = _tessa_tbl[
+            _tessa_tbl["Статус"]
+            .map(lambda x: _rd_status_label_matches_filter(x, _status_allow))
+            .fillna(False)
+        ].copy()
     _tessa_tbl = _drop_rd_detail_empty_rows(_tessa_tbl)
     if _tessa_tbl.empty:
         return
@@ -19561,6 +19631,11 @@ def _rd_plan_fallback_view(
             _cd_fb.ne("")
             & ~_cd_fb.str.lower().isin({"nan", "none", "-", "—", "блок"})
         ].copy()
+    # RD-01: отменённые разделы не входят в план (как в _rd_plan_csv_sections_df).
+    # По всем колонкам со «статус» (отмена бывает в «Статус», а не «Статус РД»).
+    _canc_fb = _rd_plan_cancelled_row_mask(df)
+    if bool(_canc_fb.any()):
+        df = df[~_canc_fb].copy()
     if df.empty:
         st.info("Нет строк после фильтра.")
         return True
@@ -20340,6 +20415,21 @@ def _rd_plan_fallback_view(
                             fact_curve=_fd_fb,
                             rd_summ=_rd_summ_fb,
                         )
+                        # RD-01/RD-02: «Факт на текущую дату» = «Выдано в
+                        # производство работ» + «На рассмотрении у ГИП» из
+                        # tessa_*_rd.csv (как в pie «Исполнение РД»), а НЕ по
+                        # прогнозным датам CSV (иначе факт≠pie и завышен).
+                        if _tessa_loaded:
+                            _tz_fact_kpi = _count_rd_pie_tz(
+                                list(sel) if proj_col and sel else None
+                            )
+                            _fd_tessa = float(
+                                int(_tz_fact_kpi.get(_RD_TESSA_STATUS_PRODUCTION, 0))
+                                + int(_tz_fact_kpi.get(_RD_TESSA_STATUS_REVIEW, 0))
+                            )
+                            if _fd_tessa > 0:
+                                _fd_fb = _fd_tessa
+                                _dev_fb = float(_pd_fb - _fd_fb)
                         _max_plan_fb = (
                             df["_plan_dt"].max().date()
                             if df["_plan_dt"].notna().any()
@@ -35536,6 +35626,22 @@ def dashboard_documentation(
                 }
                 _build_pie = _build_pie and bool(pie_data)
 
+            # RD-10: круговая «Исполнение РД» отражает тот же выбранный статус,
+            # что и детальная таблица (единый классификатор _rd_status_filter_*).
+            if (
+                selected_statuses
+                and rd_status_options
+                and set(selected_statuses) != set(rd_status_options)
+                and pie_data
+            ):
+                _pie_allow = _rd_status_filter_expand(selected_statuses)
+                pie_data = {
+                    k: v
+                    for k, v in pie_data.items()
+                    if _rd_status_label_matches_filter(k, _pie_allow)
+                }
+                _build_pie = _build_pie and bool(pie_data)
+
             if _build_pie:
                 if True:
                     _nk = len(pie_data)
@@ -36775,6 +36881,8 @@ def dashboard_documentation(
                 work_df=df,
                 selected_projects=selected_projects_doc or None,
                 selected_sections=selected_sections_doc or None,
+                selected_statuses=selected_statuses or None,
+                status_options=rd_status_options or None,
                 metric_mode=rd_metric_mode,
                 show_forecast_date=show_forecast_date_col,
                 doc_fk=_doc_fk,
@@ -45932,6 +46040,7 @@ def _build_tessa_rd_detail_table(
                 # финальные подписи и порядок задаёт _rd_detail_prepare_for_display.
                 "Проект": project,
                 "Наименование разделов работ": section,
+                "Номер договора": _rd_format_contract_no(contract_no),
                 "Шифр": cipher,
                 "Шифр полный": _safe(internal_col, r) if internal_col else "",
                 "Версия": _safe(version_col, r) if version_col else "",
