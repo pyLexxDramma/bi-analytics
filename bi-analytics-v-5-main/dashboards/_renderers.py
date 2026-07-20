@@ -19108,6 +19108,14 @@ def _rd_delay_build_date_rows(
         (work["_forecast_dt"] < _ymin) | (work["_forecast_dt"] > _ymax)
     )
     work.loc[_f_bad, "_forecast_dt"] = pd.NaT
+    # «Дата выдачи в производство работ» имеет приоритет над прогнозной при выборе
+    # конца красной полосы — её мусорные значения (напр. 01.01.2080) тоже отсекаем,
+    # иначе красный сегмент уезжает в далёкое будущее.
+    if "_production_dt" in work.columns:
+        _p_bad = work["_production_dt"].notna() & (
+            (work["_production_dt"] < _ymin) | (work["_production_dt"] > _ymax)
+        )
+        work.loc[_p_bad, "_production_dt"] = pd.NaT
 
     # Глобальное начало шкалы — самая ранняя из дат (договор/прогноз) минус отступ,
     # чтобы у самого раннего срока жёлтый сегмент имел видимую ширину.
@@ -32574,6 +32582,23 @@ def _pd_delay_chart_source_mask(df: pd.DataFrame, masks: dict) -> pd.Series:
     return anc & cipher_m
 
 
+def _pd_clamp_chart_dates(s: pd.Series, ts_report: pd.Timestamp) -> pd.Series:
+    """Отсекаем мусорные даты MSP (напр. 01.01.2080) до расчёта сегментов Gantt.
+
+    Значения вне диапазона [2000-01-01; дата отчёта + 10 лет] → NaT, иначе
+    max() уводит конец красной полосы и ось X в далёкое будущее.
+    """
+    if s is None or len(s) == 0:
+        return s
+    ser = pd.to_datetime(s, errors="coerce")
+    _ymin = pd.Timestamp("2000-01-01")
+    _ymax = pd.Timestamp(ts_report).normalize() + pd.DateOffset(years=10)
+    _bad = ser.notna() & ((ser < _ymin) | (ser > _ymax))
+    if _bad.any():
+        ser = ser.mask(_bad)
+    return ser
+
+
 def _pd_aggregate_delay_segments_for_indices(
     idx: pd.Index,
     *,
@@ -32588,11 +32613,11 @@ def _pd_aggregate_delay_segments_for_indices(
     """Крайние сроки MSP по группе задач: min начало, max БП, max окончание."""
     if len(idx) == 0:
         return None
-    bs = bs_dt.reindex(idx)
-    ss = ss_dt.reindex(idx)
-    bf = bf_dt.reindex(idx)
-    af = af_dt.reindex(idx)
-    sf = sf_dt.reindex(idx)
+    bs = _pd_clamp_chart_dates(bs_dt.reindex(idx), ts_report)
+    ss = _pd_clamp_chart_dates(ss_dt.reindex(idx), ts_report)
+    bf = _pd_clamp_chart_dates(bf_dt.reindex(idx), ts_report)
+    af = _pd_clamp_chart_dates(af_dt.reindex(idx), ts_report)
+    sf = _pd_clamp_chart_dates(sf_dt.reindex(idx), ts_report)
     pc = pct.reindex(idx).fillna(0.0)
     starts: list[pd.Timestamp] = []
     for i in idx:
@@ -32662,11 +32687,20 @@ def _pd_segment_from_row_idx(
     """Одна строка MSP «Раздел …» — даты для графика по ТЗ (п.5–6)."""
     if idx not in bs_dt.index:
         return None
-    bs = bs_dt.loc[idx]
-    ss = ss_dt.loc[idx] if idx in ss_dt.index else pd.NaT
-    bf = bf_dt.loc[idx]
-    af = af_dt.loc[idx] if idx in af_dt.index else pd.NaT
-    sf = sf_dt.loc[idx] if idx in sf_dt.index else pd.NaT
+
+    def _clamp1(v):
+        ts = pd.to_datetime(v, errors="coerce")
+        if pd.isna(ts):
+            return pd.NaT
+        _ymin = pd.Timestamp("2000-01-01")
+        _ymax = pd.Timestamp(ts_report).normalize() + pd.DateOffset(years=10)
+        return pd.NaT if (ts < _ymin or ts > _ymax) else ts
+
+    bs = _clamp1(bs_dt.loc[idx])
+    ss = _clamp1(ss_dt.loc[idx]) if idx in ss_dt.index else pd.NaT
+    bf = _clamp1(bf_dt.loc[idx])
+    af = _clamp1(af_dt.loc[idx]) if idx in af_dt.index else pd.NaT
+    sf = _clamp1(sf_dt.loc[idx]) if idx in sf_dt.index else pd.NaT
     pc = float(pct.loc[idx]) if idx in pct.index else 0.0
     start = bs if pd.notna(bs) else (ss if pd.notna(ss) else bf)
     if pd.isna(start) or pd.isna(bf):
@@ -33928,12 +33962,11 @@ def _pd_delay_section_duration_figure(
         bf_n = _as_ts(bf_e)
         fin_n = _as_ts(fin_e)
         _has_red = show_forecast and float(d_days) > 0 and pd.notna(d_e)
-        # Жёлтая дата — справа от конца полосы; при красном сегменте только прогнозная.
-        if (
-            str(ly).strip()
-            and pd.notna(bf_n)
-            and (pd.isna(fin_n) or fin_n <= bf_n)
-            and not _has_red
+        # Базовое окончание — всегда у конца жёлтой полосы. Без красного сегмента —
+        # справа от полосы; при красном — у стыка жёлтого/красного (ТЗ: «справа от
+        # конца жёлтого — Базовое окончание, справа от конца красного — Окончание»).
+        if str(ly).strip() and pd.notna(bf_n) and not _has_red and (
+            pd.isna(fin_n) or fin_n <= bf_n
         ):
             _y_ann = _pd_delay_date_annotation(
                 bf_e,
@@ -33945,6 +33978,15 @@ def _pd_delay_section_duration_figure(
             )
             if _y_ann:
                 fig.add_annotation(**_ann_kw, **_y_ann)
+        elif str(ly).strip() and pd.notna(bf_n) and _has_red:
+            fig.add_annotation(
+                **_ann_kw,
+                x=bf_n.to_pydatetime(),
+                text=str(ly).strip(),
+                xanchor="right",
+                xshift=-6,
+                font={"size": 10, "color": "#1a1a1a"},
+            )
         if show_forecast and pd.notna(fin_e) and str(lg).strip() and not _has_red:
             _g_ann = _pd_delay_date_annotation(
                 fin_e,
