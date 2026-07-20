@@ -42957,18 +42957,14 @@ def _pred_objects_by_status_figure(
 
 
 def _pred_fmt_days_display(val) -> str:
-    """Дни просрочки: просрочка — −N; сдано в срок раньше — положительная разница (срок − факт)."""
+    """Дни просрочки = устранение − срок: просрочка > 0 (красный, сверху); досрочно < 0 (зелёный, ниже нуля)."""
     if val is None or (isinstance(val, float) and pd.isna(val)):
         return ""
     try:
         v = int(round(float(val)))
     except (TypeError, ValueError):
         return str(val).strip()
-    if v < 0:
-        return str(-v)
-    if v == 0:
-        return "0"
-    return f"-{v}"
+    return str(v)
 
 
 def _pred_fmt_due(val) -> str:
