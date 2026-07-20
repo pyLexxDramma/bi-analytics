@@ -29758,6 +29758,17 @@ def dashboard_debit_credit(df):
             return False
         return work[col].map(_dc_clean_project_val).ne("").any()
 
+    def _dc_project_col_has_empty_rows(col) -> bool:
+        """True, если колонки нет или есть хотя бы одна строка с пустым проектом.
+
+        Раньше каскад догрузки проекта запускался только когда колонка пуста
+        целиком (`not .any()`). Из-за этого при одной заполненной строке весь
+        каскад пропускался, а остальные строки оставались без проекта.
+        """
+        if not col or col not in work.columns:
+            return True
+        return work[col].map(_dc_clean_project_val).eq("").any()
+
     def _dc_project_from_contract_text(text, known_names: list[str]) -> str:
         raw = str(text or "")
         low = raw.casefold().replace("ё", "е")
@@ -29804,7 +29815,10 @@ def dashboard_debit_credit(df):
         if _pk:
             _dog_partner_to_project.setdefault(_pk, _pname)
 
-    if not _dc_project_col_has_data(project_col):
+    if _dc_project_col_has_empty_rows(project_col):
+        # Существующий проект (если колонка есть) остаётся приоритетом —
+        # заполненные строки не меняем, каскад дозаполняет только пустые.
+        _existing_project_col = project_col if (project_col and project_col in work.columns) else None
         # Шаг 1 — из Dogovor.json по guid договора
         if _dog_lookup_dc:
             def _resolve_project_name(v):
@@ -29944,6 +29958,7 @@ def dashboard_debit_credit(df):
 
         work["_project_resolved"] = work.apply(
             lambda r: _dc_cascade_pick(
+                r.get(_existing_project_col) if _existing_project_col else "",
                 r.get("_project_from_dogovor"),
                 r.get("_project_from_dogovor_num"),
                 r.get("_project_from_dannye_by_dog"),
