@@ -4454,8 +4454,15 @@ def _apply_finance_light_preview_chart_colors(fig) -> None:
         "#27ae60",
     }
     try:
+        # Фон полотна фиксируем в самой фигуре: apply_chart_background берёт его из
+        # глобальной utils.CHART_BG_COLOR, которая при гонке rerun может ещё быть тёмной —
+        # тогда график «залипал» тёмным. Iframe Plotly изолирован от CSS, поэтому цвет
+        # фона должен быть в JSON фигуры.
+        _light_bg = "rgba(255, 255, 255, 0.96)"
         fig.update_layout(
             font=dict(color=_ax),
+            plot_bgcolor=_light_bg,
+            paper_bgcolor=_light_bg,
             legend=dict(
                 font=dict(color=_leg),
                 bgcolor="rgba(255, 255, 255, 0.96)",
@@ -39297,13 +39304,22 @@ def _forecast_per_lot_distribution_totals(
     abc_source=None,
     row_modes: Optional[pd.Series] = None,
     distribution_mode: str = "uniform",
+    only_month=None,
 ) -> pd.DataFrame:
-    """По каждой строке лота: суммы план/факт и итог распределённого БДДС прогноза (руб. → млн в таблице)."""
+    """По каждой строке лота: суммы план/факт и распределённый БДДС прогноз (руб. → млн в таблице).
+
+    only_month=None — прогноз за весь срок лота (итог). Если передан период (pd.Period месяца
+    или значение, приводимое к нему), в колонку прогноза попадает только доля этого месяца —
+    тогда видно, как условие распределения (равномерно / % A/B/C) меняет прогноз в этом месяце.
+    """
     if work_df is None or getattr(work_df, "empty", True):
         return pd.DataFrame()
     df = work_df.copy().reset_index(drop=True)
     abc_src = abc_source.reset_index(drop=True) if abc_source is not None else None
     rm = row_modes.reset_index(drop=True) if row_modes is not None else None
+    _only_mp = _forecast_norm_month_period(only_month) if only_month is not None else None
+    if isinstance(_only_mp, float) and pd.isna(_only_mp):
+        _only_mp = None
 
     mode = (distribution_mode or "uniform").strip().lower()
     use_abc_default = mode in ("abc", "%", "процент", "a/b/c", "a b c")
@@ -39359,7 +39375,14 @@ def _forecast_per_lot_distribution_totals(
         else:
             dp = _bdds_distribute_row_uniform(plan_amt, ps, pe)
 
-        fc_sum = float(sum(dp.values())) if dp else 0.0
+        if not dp:
+            fc_sum = 0.0
+        elif _only_mp is not None:
+            fc_sum = float(
+                sum(v for m, v in dp.items() if _forecast_norm_month_period(m) == _only_mp)
+            )
+        else:
+            fc_sum = float(sum(dp.values()))
 
         rows_out.append(
             {
@@ -39374,6 +39397,35 @@ def _forecast_per_lot_distribution_totals(
         )
 
     return pd.DataFrame(rows_out)
+
+
+def _forecast_lot_oldnew_month_options(
+    work_df: pd.DataFrame,
+    *,
+    abc_source=None,
+    row_modes: Optional[pd.Series] = None,
+) -> list:
+    """Месяцы (pd.Period, freq=M) с ненулевым прогнозом — для выбора периода в таблице «было → стало»."""
+    mdf, _err = compute_bddcs_forecast_monthly(
+        work_df,
+        distribution_mode="uniform",
+        abc_source=abc_source,
+        row_modes=row_modes,
+    )
+    if mdf is None or getattr(mdf, "empty", True):
+        return []
+    out: set = set()
+    for _, r in mdf.iterrows():
+        try:
+            if float(r.get("bdds_forecast", 0.0) or 0.0) <= 0.0:
+                continue
+        except (TypeError, ValueError):
+            continue
+        mp = _forecast_norm_month_period(r["month"])
+        if mp is None or (isinstance(mp, float) and pd.isna(mp)):
+            continue
+        out.add(mp)
+    return sorted(out, key=lambda x: str(x))
 
 
 # ==================== DASHBOARD: Approved Budget ====================
@@ -40182,7 +40234,14 @@ def _forecast_merge_bddcs_from_1c(project_df: pd.DataFrame, project_name: str) -
 def _forecast_filter_rows_by_plan_end_range(
     work: pd.DataFrame, *, date_from, date_to
 ) -> pd.DataFrame:
-    """Как фильтры БДДС: ограничение строк по календарю по полю plan end."""
+    """Оставляем лоты, АКТИВНЫЕ в периоде «С»–«По» (пересечение срока лота с диапазоном).
+
+    Раньше фильтр отбирал только строки, у которых plan end попадает в диапазон, —
+    из-за этого многомесячные лоты, идущие сквозь выбранный месяц, но заканчивающиеся
+    позже, выпадали (например, лот с началом в июне и окончанием в ноябре пропадал при
+    сужении до июня). Теперь строка остаётся, если её срок [plan start; plan end]
+    пересекает [date_from; date_to]: plan end ≥ date_from И plan start ≤ date_to.
+    """
     if work is None or getattr(work, "empty", True) or date_from is None or date_to is None:
         return work
     if "plan end" not in work.columns:
@@ -40190,14 +40249,18 @@ def _forecast_filter_rows_by_plan_end_range(
     pe = pd.to_datetime(work["plan end"], errors="coerce")
     if not pe.notna().any():
         return work
+    # Начало лота: plan start, если есть; иначе — plan end (одномоментный лот).
+    if "plan start" in work.columns:
+        ps = pd.to_datetime(work["plan start"], errors="coerce")
+        ps = ps.fillna(pe)
+    else:
+        ps = pe
     d0 = pd.Timestamp(date_from)
     d1 = pd.Timestamp(date_to)
     if d0 > d1:
         d0, d1 = d1, d0
-    return work[
-        (pe >= d0)
-        & (pe <= (d1 + pd.Timedelta(days=1) - pd.Timedelta(seconds=1)))
-    ].copy()
+    d1_end = d1 + pd.Timedelta(days=1) - pd.Timedelta(seconds=1)
+    return work[(pe >= d0) & (ps <= d1_end)].copy()
 
 
 def _forecast_month_calendar_intersects(
@@ -41406,7 +41469,8 @@ def dashboard_forecast_budget(df):
                             min_value=_mn_all_fc or _def_sf,
                             max_value=_mx_all_fc or _def_st,
                             default=(_def_sf, _def_st) if _def_sf and _def_st else None,
-                            help="Диапазон по датам окончания плана MSP.",
+                            help="Оставляет лоты, активные в периоде (срок лота пересекает диапазон), "
+                            "а не только заканчивающиеся в нём.",
                         )
 
                         filtered_scope = _forecast_filter_rows_by_plan_end_range(
@@ -41460,7 +41524,9 @@ def dashboard_forecast_budget(df):
     _fc_updated_data = None
     _fc_abc_src = None
     _fc_row_modes = None
-    _lot_oldnew_df: Optional[pd.DataFrame] = None
+    _fc_base_work = None
+    _fc_base_abc = None
+    _fc_base_modes = None
 
     _dev_base_fc = str(st.session_state.get(f"forecast_bddcs_dev_base_{_npk_fc}", "БДДС план"))
     _hide_dev_fc = bool(st.session_state.get(f"forecast_bddcs_hide_dev_{_npk_fc}", False))
@@ -41707,53 +41773,11 @@ def dashboard_forecast_budget(df):
         _fc_updated_data = updated_data
         _fc_abc_src = abc_src
         _fc_row_modes = row_modes
-
-        # «Было → стало» по лотам (исходные значения из файла vs текущие правки):
-        # нередактируемая таблица для динамики пересчёта.
-        try:
-            _base_tot = _forecast_per_lot_distribution_totals(
-                _base_work, abc_source=_base_abc, row_modes=_base_modes
-            )
-            _cur_tot = _forecast_per_lot_distribution_totals(
-                updated_data, abc_source=abc_src, row_modes=row_modes
-            )
-            if not _cur_tot.empty:
-                _pcol = "БДДС план (утверждённый), млн руб."
-                _fcol = "БДДС факт, млн руб."
-                _gcol = "БДДС прогноз (итого), млн руб."
-                _base_by_lot = (
-                    _base_tot.set_index("Лот") if not _base_tot.empty else pd.DataFrame()
-                )
-                _on_rows: List[dict] = []
-                for _, _cr in _cur_tot.iterrows():
-                    _lot = str(_cr.get("Лот", ""))
-                    _bp_new = float(_cr.get(_pcol, 0.0) or 0.0)
-                    _bf_new = float(_cr.get(_fcol, 0.0) or 0.0)
-                    _fc_new = float(_cr.get(_gcol, 0.0) or 0.0)
-                    if not _base_by_lot.empty and _lot in _base_by_lot.index:
-                        _br = _base_by_lot.loc[_lot]
-                        _bp_old = float(_br.get(_pcol, 0.0) or 0.0)
-                        _bf_old = float(_br.get(_fcol, 0.0) or 0.0)
-                        _fc_old = float(_br.get(_gcol, 0.0) or 0.0)
-                    else:
-                        _bp_old = _bp_new
-                        _bf_old = _bf_new
-                        _fc_old = _fc_new
-                    _on_rows.append(
-                        {
-                            "Лот": _lot,
-                            "БДДС план было, млн руб.": round(_bp_old, 1),
-                            "БДДС план стало, млн руб.": round(_bp_new, 1),
-                            "БДДС факт было, млн руб.": round(_bf_old, 1),
-                            "БДДС факт стало, млн руб.": round(_bf_new, 1),
-                            "Прогноз было, млн руб.": round(_fc_old, 1),
-                            "Прогноз стало, млн руб.": round(_fc_new, 1),
-                        }
-                    )
-                if _on_rows:
-                    _lot_oldnew_df = pd.DataFrame(_on_rows)
-        except Exception:
-            _lot_oldnew_df = None
+        # Данные для таблицы «Пересчёт по лотам: было → стало» строятся при рендере,
+        # после выбора периода прогноза (селектор «Прогноз за период»).
+        _fc_base_work = _base_work
+        _fc_base_abc = _base_abc
+        _fc_base_modes = _base_modes
 
 
     if calc_error and forecast_budget_df.empty:
@@ -42164,19 +42188,108 @@ def dashboard_forecast_budget(df):
         bold_row_indices={summary_numeric.index[-1]},
         table_scroll_max_height_vh=70.0,
     )
-    if not _many_projects_fc and _lot_oldnew_df is not None and not _lot_oldnew_df.empty:
+    if not _many_projects_fc and _fc_updated_data is not None and not getattr(_fc_updated_data, "empty", True):
         st.subheader("Пересчёт по лотам: было → стало")
-        st.caption(
-            "Исходные значения — из файла; «стало» — после ваших правок. "
-            "Расчёт прогноза распределяет суммы по лоту, затем агрегирует по месяцу."
+        _month_opts = _forecast_lot_oldnew_month_options(
+            _fc_updated_data, abc_source=_fc_abc_src, row_modes=_fc_row_modes
         )
-        _render_format_dataframe_html(
-            _lot_oldnew_df,
-            file_stem="forecast_bddcs_lot_oldnew",
-            key_prefix=f"fcast_oldnew_{_npk_fc}",
-            finance_decimal_places=1,
-            table_scroll_max_height_vh=60.0,
+        _period_all_lbl = "Весь срок (итог по лоту)"
+        _period_choices = [_period_all_lbl] + [format_period_ru(m) for m in _month_opts]
+        _sel_period_lbl = st.selectbox(
+            "Прогноз за период",
+            _period_choices,
+            key=f"forecast_oldnew_period_{_npk_fc}",
+            help="«Весь срок» — вся сумма лота. Выберите месяц, чтобы увидеть, "
+            "как условие распределения (равномерно / % A/B/C) меняет прогноз именно в этом месяце.",
         )
+        _only_month = None
+        if _sel_period_lbl != _period_all_lbl:
+            for _m in _month_opts:
+                if format_period_ru(_m) == _sel_period_lbl:
+                    _only_month = _m
+                    break
+
+        if _only_month is None:
+            _fc_col_old = "Прогноз было (весь срок), млн руб."
+            _fc_col_new = "Прогноз стало (весь срок), млн руб."
+            st.caption(
+                "Исходные значения — из файла; «стало» — после ваших правок. "
+                "Прогноз показан за весь срок лота (сумма одинакова для «равномерно» и «% A/B/C» — "
+                "меняется только раскладка по месяцам). Выберите месяц в «Прогноз за период», "
+                "чтобы увидеть пересчёт прогноза за конкретный месяц."
+            )
+        else:
+            _fc_col_old = f"Прогноз было ({_sel_period_lbl}), млн руб."
+            _fc_col_new = f"Прогноз стало ({_sel_period_lbl}), млн руб."
+            st.caption(
+                f"Исходные значения — из файла; «стало» — после ваших правок. "
+                f"Прогноз — доля лота, приходящаяся на {_sel_period_lbl} "
+                f"(равномерно = сумма ÷ число месяцев срока; % A/B/C = A в месяце начала, "
+                f"C в месяце окончания, B поровну по промежуточным)."
+            )
+
+        _lot_oldnew_df: Optional[pd.DataFrame] = None
+        try:
+            _base_tot = _forecast_per_lot_distribution_totals(
+                _fc_base_work,
+                abc_source=_fc_base_abc,
+                row_modes=_fc_base_modes,
+                only_month=_only_month,
+            )
+            _cur_tot = _forecast_per_lot_distribution_totals(
+                _fc_updated_data,
+                abc_source=_fc_abc_src,
+                row_modes=_fc_row_modes,
+                only_month=_only_month,
+            )
+            if not _cur_tot.empty:
+                _pcol = "БДДС план (утверждённый), млн руб."
+                _fcol = "БДДС факт, млн руб."
+                _gcol = "БДДС прогноз (итого), млн руб."
+                _base_by_lot = (
+                    _base_tot.set_index("Лот") if not _base_tot.empty else pd.DataFrame()
+                )
+                _on_rows: List[dict] = []
+                for _, _cr in _cur_tot.iterrows():
+                    _lot = str(_cr.get("Лот", ""))
+                    _bp_new = float(_cr.get(_pcol, 0.0) or 0.0)
+                    _bf_new = float(_cr.get(_fcol, 0.0) or 0.0)
+                    _fc_new = float(_cr.get(_gcol, 0.0) or 0.0)
+                    if not _base_by_lot.empty and _lot in _base_by_lot.index:
+                        _br = _base_by_lot.loc[_lot]
+                        _bp_old = float(_br.get(_pcol, 0.0) or 0.0)
+                        _bf_old = float(_br.get(_fcol, 0.0) or 0.0)
+                        _fc_old = float(_br.get(_gcol, 0.0) or 0.0)
+                    else:
+                        _bp_old = _bp_new
+                        _bf_old = _bf_new
+                        _fc_old = _fc_new
+                    _on_rows.append(
+                        {
+                            "Лот": _lot,
+                            "БДДС план было, млн руб.": round(_bp_old, 1),
+                            "БДДС план стало, млн руб.": round(_bp_new, 1),
+                            "БДДС факт было, млн руб.": round(_bf_old, 1),
+                            "БДДС факт стало, млн руб.": round(_bf_new, 1),
+                            _fc_col_old: round(_fc_old, 1),
+                            _fc_col_new: round(_fc_new, 1),
+                        }
+                    )
+                if _on_rows:
+                    _lot_oldnew_df = pd.DataFrame(_on_rows)
+        except Exception:
+            _lot_oldnew_df = None
+
+        if _lot_oldnew_df is not None and not _lot_oldnew_df.empty:
+            _render_format_dataframe_html(
+                _lot_oldnew_df,
+                file_stem="forecast_bddcs_lot_oldnew",
+                key_prefix=f"fcast_oldnew_{_npk_fc}",
+                finance_decimal_places=1,
+                table_scroll_max_height_vh=60.0,
+            )
+        else:
+            st.info("Нет данных для таблицы «было → стало».")
 
     _status_disp = _forecast_financier_status_dataset(
         filtered_scope=filtered_scope,
