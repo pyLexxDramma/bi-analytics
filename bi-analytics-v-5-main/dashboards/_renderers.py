@@ -19164,13 +19164,16 @@ def _rd_delay_chart_segments(
     forecast_lbl = _pd_chart_date_label(forecast_ts) if pd.notna(forecast_ts) else ""
     if pd.notna(forecast_ts) and forecast_ts > contract_n:
         delay_dur = int((forecast_ts - contract_n).days)
+        # RD-09: раздел выдан в производство с опозданием — рисуем зелёный
+        # (start → дата по договору) + красный (по договору → факт), чтобы у
+        # выданных разделов всегда была зелёная линия, а не только красная.
         return {
             "_start_dt": start_n,
             "_bf_dt": contract_n,
-            "_fin_dt": pd.NaT,
+            "_fin_dt": contract_n if done else pd.NaT,
             "_delay_end_dt": forecast_ts,
             "_base_dur": float(base_dur),
-            "_fact_dur": 0.0,
+            "_fact_dur": float(base_dur) if done else 0.0,
             "_delay_dur": float(delay_dur),
             "_lbl_yellow": contract_lbl,
             "_lbl_green": "",
@@ -19334,8 +19337,19 @@ def _render_rd_delay_fallback_chart(
     if detail_tbl is None or getattr(detail_tbl, "empty", True):
         st.info("Нет данных для графика просрочки.")
         return
-    # Основной график — всегда date-Gantt (как на ТЗ). «% от общего объёма»
-    # влияет на помесячную динамику, не подменяет Gantt столбчатым.
+    # RD-11: в режиме «% от общего объёма» основной график — столбчатый с долей
+    # просроченных разделов от объёма; date-Gantt остаётся для «Количество разделов».
+    if str(metric_mode or "").strip().startswith("%"):
+        _render_rd_delay_overdue_bar_chart(
+            detail_tbl,
+            view_mode=view_mode,
+            doc_code=doc_code,
+            metric_mode=metric_mode,
+            plan_sec_df=plan_sec_df,
+            plan_proj_col=plan_proj_col,
+        )
+        return
+    # Основной график — date-Gantt (как на ТЗ) для режима «Количество разделов».
     _tbl_g = _rd_delay_enrich_detail_from_plan(
         _drop_rd_detail_empty_rows(detail_tbl.copy()),
         plan_sec_df,
@@ -19366,6 +19380,7 @@ def _render_rd_delay_fallback_chart(
                 yellow_hover="Дата по договору",
                 green_hover="Прогнозная дата выдачи",
                 show_forecast=show_forecast,
+                delay_label_as_days=True,
             )
             # Ключ зависит от checkbox/режима — иначе Streamlit кэширует старый fig.
             _ck = (
@@ -19809,6 +19824,28 @@ def _rd_plan_fallback_view(
         stat_vals = sorted(
             stat_vals + [_RD_TESSA_STATUS_NOT_ISSUED], key=lambda x: x.casefold()
         )
+
+    if st.button(
+        "Сбросить фильтры",
+        key=f"rd_fb_reset_{fb_k}",
+        help="Вернуть все фильтры этой вкладки к значениям по умолчанию.",
+    ):
+        for _rk in (
+            f"rd_fb_proj_{fb_k_shared}",
+            f"rd_fb_sec_{fb_k_shared}",
+            f"rd_fb_per_mode_{fb_k_shared}",
+            f"rd_fb_dr_{fb_k_shared}",
+            f"rd_fb_st_{fb_k_shared}",
+            f"rd_fb_delay_view_{fb_k}",
+            f"rd_fb_forecast_{fb_k}",
+            f"rd_fb_delay_metric_{fb_k}",
+            f"rd_fb_metric_{fb_k}",
+        ):
+            try:
+                st.session_state.pop(_rk, None)
+            except Exception:
+                pass
+        st.rerun()
 
     f2a, f2b, f2c = st.columns(3, gap="small")
     with f2a:
@@ -33978,6 +34015,7 @@ def _pd_delay_section_duration_figure(
     yellow_hover: str = "Базовое окончание",
     green_hover: str = "Окончание",
     show_forecast: bool = True,
+    delay_label_as_days: bool = False,
 ) -> "go.Figure":
     """ПД/РД: жёлтый max БП, зелёное max окончание, красная просрочка; ось X — даты.
 
@@ -34158,13 +34196,15 @@ def _pd_delay_section_duration_figure(
         # Базовое окончание — всегда у конца жёлтой полосы. Без красного сегмента —
         # справа от полосы; при красном — у стыка жёлтого/красного (ТЗ: «справа от
         # конца жёлтого — Базовое окончание, справа от конца красного — Окончание»).
-        if str(ly).strip() and pd.notna(bf_n) and not _has_red and (
+        # RD-08: без просрочки у конца полосы — «в срок» вместо даты по договору.
+        _no_red_lbl = "в срок" if delay_label_as_days else ly
+        if str(_no_red_lbl).strip() and pd.notna(bf_n) and not _has_red and (
             pd.isna(fin_n) or fin_n <= bf_n
         ):
             _y_ann = _pd_delay_date_annotation(
                 bf_e,
                 st,
-                ly,
+                _no_red_lbl,
                 inside_color="#1a1a1a",
                 outside_color="#1a1a1a",
                 anchor_end=True,
@@ -34180,7 +34220,13 @@ def _pd_delay_section_duration_figure(
                 xshift=-6,
                 font={"size": 10, "color": "#1a1a1a"},
             )
-        if show_forecast and pd.notna(fin_e) and str(lg).strip() and not _has_red:
+        if (
+            show_forecast
+            and pd.notna(fin_e)
+            and str(lg).strip()
+            and not _has_red
+            and not delay_label_as_days
+        ):
             _g_ann = _pd_delay_date_annotation(
                 fin_e,
                 st,
@@ -34192,9 +34238,14 @@ def _pd_delay_section_duration_figure(
             if _g_ann:
                 fig.add_annotation(**_ann_kw, **_g_ann)
         if _has_red and pd.notna(d_e):
-            _r_lbl = str(lr).strip().split("/")[-1].strip() or str(lr).strip()
-            if "/" in str(lr):
-                _r_lbl = _rd_format_chart_date_cell(lr) or _r_lbl
+            if delay_label_as_days:
+                # RD-03: на вкладке просрочки подпись красного сегмента — число
+                # дней просрочки (целое, выравнивание вправо), а не дата.
+                _r_lbl = f"{int(round(float(d_days)))} дн."
+            else:
+                _r_lbl = str(lr).strip().split("/")[-1].strip() or str(lr).strip()
+                if "/" in str(lr):
+                    _r_lbl = _rd_format_chart_date_cell(lr) or _r_lbl
             _r_ann = _pd_delay_date_annotation(
                 d_e,
                 bf_e,
