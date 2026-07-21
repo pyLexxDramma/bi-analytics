@@ -2500,45 +2500,17 @@ def _deviations_maket_row_note(
     *,
     block_notes_lookup: dict[str, dict[str, str]] | None = None,
 ) -> str:
-    """Заметки: своя строка L5 → L3-предок по дереву → L3 «Блок …» по имени задачи."""
-    own = (
-        _clean_display_str(row.get(notes_col))
-        if notes_col and notes_col in frame.columns
-        else ""
-    )
-    if own:
-        return own
-    if not block_notes_lookup:
-        return ""
-    by_name = block_notes_lookup.get("by_name") or {}
-    by_token = block_notes_lookup.get("by_token") or {}
-    proj = (
-        _clean_display_str(row.get("project name"))
-        if "project name" in frame.columns
-        else ""
-    )
-    # 1) строение из иерархии (_dt_lvl3_key)
-    l3 = ""
-    if "_dt_lvl3_key" in frame.columns:
-        l3 = _clean_display_str(row.get("_dt_lvl3_key"))
-    if l3:
-        hit = by_name.get(f"{proj.casefold()}||{l3.casefold()}", "")
-        if hit:
-            return hit
-        base = re.sub(r"\s*\([^)]*m2[^)]*\)\s*$", "", l3, flags=re.I)
-        base = re.sub(r"\s*\([^)]*м2[^)]*\)\s*$", "", base, flags=re.I).strip()
-        if base:
-            hit = by_name.get(f"{proj.casefold()}||{base.casefold()}", "")
-            if hit:
-                return hit
-    # 2) токен «Блок X» из названия L5 (для задач под «Общие работы»)
-    tc = _deviations_maket_resolve_task_col(frame)
-    if not tc:
-        return ""
-    tok = _deviations_block_token_from_task_name(row.get(tc))
-    if not tok:
-        return ""
-    return by_token.get(f"{proj.casefold()}||{tok}", "")
+    """Заметки только своей строки L5 (по «Названию задачи» из исходника).
+
+    Раньше при пустой заметке L5 подтягивалась заметка L3-предка «Блок …»
+    (по строению или токену «Блок X»). Это приводило к тому, что штатная
+    заметка блока приклеивалась к посторонним листовым задачам и могла
+    относиться к другой задаче/проекту. По ТЗ заказчика заметка должна
+    строго соответствовать задаче уровня 5 из исходника — не заимствуем.
+    """
+    if notes_col and notes_col in frame.columns:
+        return _clean_display_str(row.get(notes_col))
+    return ""
 
 
 def _deviations_maket_col_class(col_name: str) -> str:
@@ -6391,6 +6363,78 @@ def _gantt_building_filter_values_for_df(
     return _gantt_dedupe_block_filter_values(raw)
 
 
+def _deviations_building_keys_with_deviations(work: pd.DataFrame):
+    """Множество ключей строений (L3), под которыми есть строки макета отклонений.
+
+    Возвращает:
+    - set(cleaned L3 label) — если у среза есть отклонения с распознанным предком-строением;
+    - set() — если отклонений в срезе нет вовсе (строения фильтровать не по чему);
+    - None — отклонения есть, но предок-строение не распознан (нельзя надёжно сузить —
+      оставляем полный список, чтобы не прятать валидные опции).
+    """
+    if work is None or getattr(work, "empty", True):
+        return set()
+    try:
+        maket = _deviations_maket_scope_df(work)
+    except Exception:
+        return None
+    if maket is None or getattr(maket, "empty", True):
+        return set()
+    if "_dt_lvl3_key" not in maket.columns:
+        return None
+    keys = {
+        _deviations_gantt_like_task_label(x)
+        for x in maket["_dt_lvl3_key"].dropna().astype(str).tolist()
+    }
+    keys = {k for k in keys if k and k.lower() not in ("nan", "none", "nat")}
+    # Макет есть, но ни одна строка не привязана к строению L3 (напр. отклонение
+    # под блоком «Ковенанты», у которого нет L3): фильтровать «Строение» не по чему —
+    # прячем варианты (остаётся только «Все»), а не показываем всю структуру проекта.
+    return keys
+
+
+def _deviations_scope_building_opts_to_deviations(opts: list[str], dev_keys) -> list[str]:
+    """Оставить среди опций «Строение» только те, под которыми есть отклонения."""
+    if dev_keys is None:
+        return opts
+    if not dev_keys:
+        return []
+    # Оставляем только строения, под которыми есть отклонения. Если ни одна опция
+    # не сопоставилась (напр. все отклонения под блоком «Ковенанты» без L3-строения),
+    # возвращаем пусто → в «Строение» останется только «Все». Полный список структуры
+    # здесь показывать нельзя: он не отражает фактические отклонения.
+    return [
+        o for o in (opts or [])
+        if _deviations_gantt_like_task_label(o) in dev_keys
+    ]
+
+
+def _deviations_scope_col_building_opts_to_deviations(
+    src: pd.DataFrame, opts: list[str], col: str | None
+) -> list[str]:
+    """Сузить опции «Строение» (значения MSP-колонки) до тех, что есть в макете отклонений.
+
+    Пустой макет → [] (строения фильтровать не по чему). Колонка не найдена в макете →
+    исходный список. Иначе — только значения, встречающиеся в строках макета.
+    """
+    if not opts:
+        return opts
+    try:
+        maket = _deviations_maket_scope_df(src)
+    except Exception:
+        return opts
+    if maket is None or getattr(maket, "empty", True):
+        return []
+    if not col or col not in maket.columns:
+        return opts
+    vals = {
+        str(v).strip()
+        for v in maket[col].dropna().astype(str).str.strip().tolist()
+        if str(v).strip() and str(v).strip().lower() not in ("nan", "none", "nat")
+    }
+    return [o for o in opts if str(o).strip() in vals]
+
+
 def _deviations_building_select_options(
     df_full: pd.DataFrame,
     *,
@@ -6400,7 +6444,7 @@ def _deviations_building_select_options(
     reason_session_key: str = "devcombo_reason",
     building_col: str | None = None,
 ) -> list[str]:
-    """Полный список задач уровня 3 по срезу проект+блок (как у ганта), не только из макета отклонений."""
+    """Список строений (L3) по срезу проект+блок — только те, под которыми есть отклонения (макет: ур.5, причина, отклонение < 0)."""
     # period/reason оставлены в сигнатуре для совместимости вызовов — на опции не влияют.
     _ = period_session_key, reason_session_key
     if df_full is None or getattr(df_full, "empty", True):
@@ -6430,12 +6474,14 @@ def _deviations_building_select_options(
     if work.empty:
         return []
 
+    dev_keys = _deviations_building_keys_with_deviations(work)
+
     level_col = _deviations_resolve_level_col_like_gantt(work)
     task_col = _deviations_resolve_task_col(work)
     if level_col and task_col:
         opts = _deviations_l3_building_option_labels(work, level_col, task_col)
         if opts:
-            return opts
+            return _deviations_scope_building_opts_to_deviations(opts, dev_keys)
 
     opts = _gantt_building_filter_values_for_df(
         work,
@@ -6445,7 +6491,7 @@ def _deviations_building_select_options(
             building_col if building_col and building_col in work.columns else None
         ),
     )
-    return opts
+    return _deviations_scope_building_opts_to_deviations(opts, dev_keys)
 
 
 def _deviations_render_building_selectbox(
@@ -10025,10 +10071,24 @@ def dashboard_plan_fact_dates(df):
                     )
                 _msp_bld_pf = _deviations_msp_gantt_style_building_col(_pfd_bld_src)
 
+                # В режиме «Показать причины отклонений» (макет: ур.5, причина,
+                # отклонение окончания < 0) список строений ограничиваем теми, под
+                # которыми реально есть отклонения. Иначе (обычная детализация) —
+                # полная структура проекта.
+                _maket_mode_pf = bool(
+                    st.session_state.get("dates_show_reason_notes", True)
+                )
+
                 if _l3_b_opts_pf:
                     pf_dates_building_filter_mode = "l3_plan_slice"
                     pf_dates_building_filter_col = None
-                    bopts = ["Все"] + _l3_b_opts_pf
+                    _l3_b_opts_show = _l3_b_opts_pf
+                    if _maket_mode_pf:
+                        _l3_b_opts_show = _deviations_scope_building_opts_to_deviations(
+                            _l3_b_opts_pf,
+                            _deviations_building_keys_with_deviations(_pfd_bld_src),
+                        )
+                    bopts = ["Все"] + _l3_b_opts_show
                     selected_building_dates = st.selectbox(
                         "Строение",
                         bopts,
@@ -10037,7 +10097,7 @@ def dashboard_plan_fact_dates(df):
                 elif _msp_bld_pf and _msp_bld_pf in _pfd_bld_src.columns:
                     pf_dates_building_filter_mode = "column"
                     pf_dates_building_filter_col = _msp_bld_pf
-                    bopts = ["Все"] + sorted(
+                    _msp_opts = sorted(
                         _pfd_bld_src[_msp_bld_pf]
                         .dropna()
                         .astype(str)
@@ -10045,6 +10105,11 @@ def dashboard_plan_fact_dates(df):
                         .unique()
                         .tolist()
                     )
+                    if _maket_mode_pf:
+                        _msp_opts = _deviations_scope_col_building_opts_to_deviations(
+                            _pfd_bld_src, _msp_opts, _msp_bld_pf
+                        )
+                    bopts = ["Все"] + _msp_opts
                     selected_building_dates = st.selectbox(
                         "Строение",
                         bopts,
@@ -10056,7 +10121,7 @@ def dashboard_plan_fact_dates(df):
                 ):
                     pf_dates_building_filter_mode = "column"
                     pf_dates_building_filter_col = pf_dates_building_col_res
-                    bopts = ["Все"] + sorted(
+                    _res_opts = sorted(
                         _pfd_bld_src[pf_dates_building_col_res]
                         .dropna()
                         .astype(str)
@@ -10064,6 +10129,11 @@ def dashboard_plan_fact_dates(df):
                         .unique()
                         .tolist()
                     )
+                    if _maket_mode_pf:
+                        _res_opts = _deviations_scope_col_building_opts_to_deviations(
+                            _pfd_bld_src, _res_opts, pf_dates_building_col_res
+                        )
+                    bopts = ["Все"] + _res_opts
                     selected_building_dates = st.selectbox(
                         "Строение",
                         bopts,
@@ -10122,6 +10192,11 @@ def dashboard_plan_fact_dates(df):
                         _k3pf = _k3pf[_k3pf.ne("") & _k3pf.str.lower().ne("nan")]
                         if len(_k3pf):
                             _go = sorted(pd.unique(_k3pf).tolist())
+                    if _maket_mode_pf:
+                        _go = _deviations_scope_building_opts_to_deviations(
+                            _go,
+                            _deviations_building_keys_with_deviations(_pfd_bld_src),
+                        )
                     bopts = ["Все"] + _go
                     selected_building_dates = st.selectbox(
                         "Строение",
@@ -10131,7 +10206,7 @@ def dashboard_plan_fact_dates(df):
                 elif dates_building_col and dates_building_col in pf_dates_proj_df.columns:
                     pf_dates_building_filter_mode = "column"
                     pf_dates_building_filter_col = dates_building_col
-                    bopts = ["Все"] + sorted(
+                    _dbc_opts = sorted(
                         _pfd_bld_src[dates_building_col]
                         .dropna()
                         .astype(str)
@@ -10139,6 +10214,11 @@ def dashboard_plan_fact_dates(df):
                         .unique()
                         .tolist()
                     )
+                    if _maket_mode_pf:
+                        _dbc_opts = _deviations_scope_col_building_opts_to_deviations(
+                            _pfd_bld_src, _dbc_opts, dates_building_col
+                        )
+                    bopts = ["Все"] + _dbc_opts
                     selected_building_dates = st.selectbox(
                         "Строение",
                         bopts,
@@ -10410,9 +10490,21 @@ def dashboard_plan_fact_dates(df):
     )
     if _covenant_block_selected:
         pass
-    elif dates_show_reason_notes and _mask_lvl_col and _mask_lvl_col in filtered_df.columns:
-        level_num = pd.to_numeric(filtered_df[_mask_lvl_col], errors="coerce")
-        filtered_df = filtered_df[level_num == 5]
+    elif dates_show_reason_notes:
+        # Макет (ТЗ): «уровень 5» — колонка «Уровень» (level), НЕ outline / level structure.
+        # В MSP-выгрузках (напр. Есипово) level=5 при level structure=3 — фильтр по
+        # outline-колонке вырезал все строки («По макету нет строк»), хотя отклонения
+        # ур.5 есть. Совмещаем с _deviations_maket_prepare_df: приоритет колонки «level».
+        _lvl_col_maket = None
+        if "level" in filtered_df.columns and pd.to_numeric(
+            filtered_df["level"], errors="coerce"
+        ).notna().any():
+            _lvl_col_maket = "level"
+        elif _mask_lvl_col and _mask_lvl_col in filtered_df.columns:
+            _lvl_col_maket = _mask_lvl_col
+        if _lvl_col_maket:
+            level_num = pd.to_numeric(filtered_df[_lvl_col_maket], errors="coerce")
+            filtered_df = filtered_df[level_num == 5]
     elif _mask_lvl_col and _mask_lvl_col in filtered_df.columns:
         level_num = pd.to_numeric(filtered_df[_mask_lvl_col], errors="coerce")
         if selected_level == "Сводные (1–3 ур.)":
