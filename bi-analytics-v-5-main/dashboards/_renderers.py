@@ -42723,11 +42723,17 @@ def _pred_expand_detail_table_css(css: str) -> str:
     )
     # Сброс внешних отступов у scroll-box: иначе margin+height вылезают за iframe
     # и горизонтальный scrollbar обрезается.
-    out += (
+    extra = (
         "\n.budget-table-scroll.pred-detail-scroll{"
         "margin:0!important;max-width:100%!important;"
         "overflow-x:scroll!important;overflow-y:auto!important;}"
     )
+    # Правило должно быть ВНУТРИ <style>, иначе вытекает текстом на страницу.
+    idx = out.rfind("</style>")
+    if idx != -1:
+        out = out[:idx] + extra + "\n" + out[idx:]
+    else:
+        out += extra
     return out
 
 
