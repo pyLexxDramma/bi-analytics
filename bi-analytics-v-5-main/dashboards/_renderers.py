@@ -18298,32 +18298,73 @@ def _build_rd_work_doc_detail_table(
     selected_section: str | None = None,
 ) -> pd.DataFrame:
     """
-    Детальная таблица РД: карточки TESSA + разделы из other_*_rd.csv без карточки («Не выдано»).
+    Детальная таблица РД (RD-01): ровно 1 строка на раздел плана other_*_rd.csv.
+    Карточка TESSA обогащает статус/даты; без карточки — «Не выдано».
+    Число строк экспорта = плановое кол-во разделов по срезу.
     """
+    csv_df = _rd_plan_csv_sections_df(selected_projects)
     tessa_tbl = _build_tessa_rd_detail_table(
         selected_projects=selected_projects,
-        selected_section=selected_section,
+        selected_section=None,
     )
-    csv_df = _rd_plan_csv_sections_df(selected_projects)
     if csv_df.empty:
+        # Нет плана — показываем только TESSA (legacy), с фильтром секции.
+        if (
+            selected_section
+            and selected_section != "Все"
+            and not tessa_tbl.empty
+        ):
+            _c = tessa_tbl["Шифр"].fillna("").astype(str).str.strip()
+            _n = (
+                tessa_tbl["Наименование разделов работ"]
+                .fillna("")
+                .astype(str)
+                .str.strip()
+            )
+            _comb = (_c + " — " + _n).where(_c.ne("") & _n.ne(""), _c.where(_c.ne(""), _n))
+            tessa_tbl = tessa_tbl.loc[_comb.eq(selected_section)].copy()
         return tessa_tbl
+
     pc = _rd_plan_csv_pick_columns(csv_df)
     if not isinstance(pc, dict):
         pc = {}
-    internal_ids = _rd_plan_tessa_internal_ids(selected_projects)
 
-    matched: set[tuple[str, str, str]] = set()
+    # Индексы TESSA: шифр / полный шифр → список (proj_key, idx).
+    # Проект сопоставляем толерантно (_project_norm_key_matches_msp_keys),
+    # иначе «Дмитровский»↔«Дмитровский 1» даёт все строки «Не выдано».
+    # Каждая карточка — не более одного раза (1 план ↔ 1 TESSA).
+    by_pn: dict[tuple[str, str], list[tuple[str, int]]] = {}
+    by_fc: dict[str, list[tuple[str, int]]] = {}
+    by_cipher: dict[str, list[tuple[str, int]]] = {}
+    used_tessa: set[int] = set()
     if not tessa_tbl.empty:
-        for _, r in tessa_tbl.iterrows():
-            matched.add(
-                (
-                    _project_filter_norm_key(r.get("Проект", "")),
-                    str(r.get("Шифр", "") or "").strip().casefold(),
-                    str(r.get("Наименование разделов работ", "") or "").strip().casefold(),
-                )
-            )
+        for _ti, _tr in tessa_tbl.iterrows():
+            _pk = _project_filter_norm_key(_tr.get("Проект", ""))
+            _cc = str(_tr.get("Шифр", "") or "").strip().casefold()
+            _nm = str(_tr.get("Наименование разделов работ", "") or "").strip().casefold()
+            _fc = str(_tr.get("Шифр полный", "") or "").strip().casefold()
+            if _fc and _fc not in ("nan", "none"):
+                by_fc.setdefault(_fc, []).append((_pk, _ti))
+            if _cc:
+                by_pn.setdefault((_cc, _nm), []).append((_pk, _ti))
+                by_cipher.setdefault(_cc, []).append((_pk, _ti))
 
-    extra_rows: list[dict[str, Any]] = []
+    def _pick_tessa(pk: str, candidates: list[tuple[str, int]] | None) -> int | None:
+        if not candidates:
+            return None
+        _pk_set = {pk} if pk else set()
+        for _tpk, _ti in candidates:
+            if _ti in used_tessa:
+                continue
+            if not _pk_set:
+                return _ti
+            if _project_norm_key_matches_msp_keys(_tpk, _pk_set) or (
+                _tpk and _project_norm_key_matches_msp_keys(pk, {_tpk})
+            ):
+                return _ti
+        return None
+
+    out_rows: list[dict[str, Any]] = []
     for _i, row in csv_df.iterrows():
         proj = _rd_csv_cell_str(row.get(pc["proj"], "")) if pc.get("proj") else ""
         cipher = _rd_csv_cell_str(row.get(pc["code"], "")) if pc.get("code") else ""
@@ -18335,20 +18376,22 @@ def _build_rd_work_doc_detail_table(
         )
         if not cipher and not sect:
             continue
-        mk = (
-            _project_filter_norm_key(proj),
-            cipher.casefold(),
-            sect.casefold(),
-        )
-        if mk in matched:
-            continue
-        has_tessa = bool(full_c and full_c.casefold() in internal_ids)
-        # RD-09: показываем ВСЕ разделы плана (любой статус), а не только
-        # «не выдан». Пропускаем лишь те, у кого уже есть карточка TESSA
-        # (её строка пришла из tessa_tbl) — иначе задвоим «полный шифр».
-        # Раздел без карточки TESSA = «Не выдано» (факт по нему не считается).
-        if has_tessa:
-            continue
+        if selected_section and selected_section != "Все":
+            _comb = (
+                (cipher + " — " + sect) if cipher and sect else (sect or cipher)
+            )
+            if _comb != selected_section:
+                continue
+
+        pk = _project_filter_norm_key(proj)
+        tessa_idx = None
+        if full_c:
+            tessa_idx = _pick_tessa(pk, by_fc.get(full_c.casefold()))
+        if tessa_idx is None:
+            tessa_idx = _pick_tessa(pk, by_pn.get((cipher.casefold(), sect.casefold())))
+        if tessa_idx is None and cipher:
+            tessa_idx = _pick_tessa(pk, by_cipher.get(cipher.casefold()))
+
         plan_s = (
             row["_plan_dt"].strftime("%d.%m.%Y")
             if pd.notna(row.get("_plan_dt"))
@@ -18364,30 +18407,68 @@ def _build_rd_work_doc_detail_table(
             if pc.get("contract") and pc["contract"] in row.index
             else ""
         )
-        extra_rows.append(
-            {
-                "Проект": proj,
-                "Наименование разделов работ": sect,
-                "Номер договора": contract_no_csv,
-                "Шифр": cipher,
-                "Шифр полный": full_c,
-                "Версия": "",
-                "Статус": _RD_TESSA_STATUS_NOT_ISSUED,
-                "Дата выдачи разделов по Договору": plan_s,
-                "Прогнозная дата выдачи разделов": fc_s if fc_s != "—" else "",
-                "Дата загрузки раздела генпроектировщиком": "",
-                "Дата выдачи в производство работ": "",
-                "Подрядчик": "",
-                "ID документа в Тессе": "",
-            }
-        )
 
-    if not extra_rows:
-        return _drop_rd_detail_empty_rows(_apply_rd_detail_deviation_columns(tessa_tbl))
-    extra = pd.DataFrame(extra_rows)
-    if tessa_tbl.empty:
-        return _drop_rd_detail_empty_rows(_apply_rd_detail_deviation_columns(extra))
-    out = pd.concat([tessa_tbl, extra], ignore_index=True)
+        if tessa_idx is not None:
+            used_tessa.add(tessa_idx)
+            tr = tessa_tbl.loc[tessa_idx]
+            _plan_from_t = str(tr.get("Дата выдачи разделов по Договору", "") or "").strip()
+            _fc_from_t = str(tr.get("Прогнозная дата выдачи разделов", "") or "").strip()
+            out_rows.append(
+                {
+                    "Проект": proj or str(tr.get("Проект", "") or ""),
+                    "Наименование разделов работ": sect
+                    or str(tr.get("Наименование разделов работ", "") or ""),
+                    "Номер договора": (
+                        str(tr.get("Номер договора", "") or "").strip()
+                        or contract_no_csv
+                    ),
+                    "Шифр": cipher or str(tr.get("Шифр", "") or ""),
+                    "Шифр полный": full_c or str(tr.get("Шифр полный", "") or ""),
+                    "Версия": str(tr.get("Версия", "") or ""),
+                    "Статус": str(tr.get("Статус", "") or _RD_TESSA_STATUS_NOT_ISSUED),
+                    "Дата выдачи разделов по Договору": (
+                        _plan_from_t
+                        if _plan_from_t and _plan_from_t not in ("—", "-", "nan")
+                        else plan_s
+                    ),
+                    "Прогнозная дата выдачи разделов": (
+                        _fc_from_t
+                        if _fc_from_t and _fc_from_t not in ("—", "-", "nan")
+                        else (fc_s if fc_s != "—" else "")
+                    ),
+                    "Дата загрузки раздела генпроектировщиком": str(
+                        tr.get("Дата загрузки раздела генпроектировщиком", "") or ""
+                    ),
+                    "Дата выдачи в производство работ": str(
+                        tr.get("Дата выдачи в производство работ", "") or ""
+                    ),
+                    "Подрядчик": str(tr.get("Подрядчик", "") or ""),
+                    "ID документа в Тессе": str(tr.get("ID документа в Тессе", "") or ""),
+                }
+            )
+        else:
+            # RD-09: раздел плана без карточки TESSA = «Не выдано».
+            out_rows.append(
+                {
+                    "Проект": proj,
+                    "Наименование разделов работ": sect,
+                    "Номер договора": contract_no_csv,
+                    "Шифр": cipher,
+                    "Шифр полный": full_c,
+                    "Версия": "",
+                    "Статус": _RD_TESSA_STATUS_NOT_ISSUED,
+                    "Дата выдачи разделов по Договору": plan_s,
+                    "Прогнозная дата выдачи разделов": fc_s if fc_s != "—" else "",
+                    "Дата загрузки раздела генпроектировщиком": "",
+                    "Дата выдачи в производство работ": "",
+                    "Подрядчик": "",
+                    "ID документа в Тессе": "",
+                }
+            )
+
+    if not out_rows:
+        return pd.DataFrame()
+    out = pd.DataFrame(out_rows)
     return _drop_rd_detail_empty_rows(_apply_rd_detail_deviation_columns(out))
 
 
@@ -36115,6 +36196,25 @@ def dashboard_documentation(
                     fact_curve=fact_to_date_msp,
                     rd_summ=_rd_summ,
                 )
+
+                # RD-02: «Факт на текущую дату» для РД — «Выдано в производство
+                # работ» + «На рассмотрении у ГИП» из tessa_*_rd.csv (как в pie
+                # «Исполнение РД»), а НЕ количество строк MSP с датой факта —
+                # иначе KPI завышается (428 вместо 374) и расходится с pie.
+                # Тот же override уже есть в fallback-ветке (_render_rd_working_doc_...),
+                # но основной путь dashboard_documentation его не применял.
+                if page_title == "Рабочая документация":
+                    try:
+                        _tz_fact_kpi = _count_rd_pie_tz(selected_projects_doc or None)
+                        _fd_tessa = float(
+                            int(_tz_fact_kpi.get(_RD_TESSA_STATUS_PRODUCTION, 0))
+                            + int(_tz_fact_kpi.get(_RD_TESSA_STATUS_REVIEW, 0))
+                        )
+                    except Exception:
+                        _fd_tessa = 0.0
+                    if _fd_tessa > 0:
+                        fact_to_date = _fd_tessa
+                        deviation_to_date = float(plan_to_date - fact_to_date)
 
                 first_plan_date = plan_df["Дата"].min() if not plan_df.empty else None
                 last_plan_date = plan_df["Дата"].max() if not plan_df.empty else None
