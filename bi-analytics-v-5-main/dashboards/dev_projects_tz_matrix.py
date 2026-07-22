@@ -12,6 +12,7 @@ import html as html_module
 import json
 import re
 from collections import defaultdict
+from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple, Union
 
 import numpy as np
@@ -1716,13 +1717,71 @@ def developer_projects_msp_snapshot_hints(
     return hints
 
 
+def _msp_row_source_project_bucket(source_file: Any) -> str:
+    """msp_<slug>_DD-MM-YYYY → slug; иначе пусто."""
+    if source_file is None or (isinstance(source_file, float) and pd.isna(source_file)):
+        return ""
+    try:
+        from web_loader import _msp_project_bucket
+
+        stem = Path(str(source_file).replace("\\", "/").split("/")[-1]).stem
+        return str(_msp_project_bucket(stem) or "").strip().lower()
+    except Exception:
+        return ""
+
+
+def _keep_latest_msp_snapshot_rows(df: pd.DataFrame) -> pd.DataFrame:
+    """
+    Жёстко оставляет только max(snapshot_date) на логический MSP-проект.
+
+    Нужно до dedupe по unique id: иначе при разных подписях project name
+    (zhukovsky1 / Жуковский) или multi-proj keep=(project,id) в кадре остаются
+    и июнь, и июль — вехи с нулевым Откл. из старого снимка перебивают актуальные.
+    """
+    if df is None or getattr(df, "empty", True) or "snapshot_date" not in df.columns:
+        return df
+    out = df.copy()
+    out["_snap_ord"] = pd.to_datetime(out["snapshot_date"], errors="coerce")
+    has = out["_snap_ord"].notna()
+    if not bool(has.any()):
+        return out.drop(columns=["_snap_ord"], errors="ignore")
+
+    src_col = next(
+        (c for c in ("__source_file", "source_file", "_source_file") if c in out.columns),
+        None,
+    )
+    pc = _find_col(out, ["project name", "Проект", "Project", "проект"])
+    if src_col is not None:
+        keys = out[src_col].map(_msp_row_source_project_bucket).astype(str)
+    else:
+        keys = pd.Series([""] * len(out), index=out.index, dtype=object)
+    if pc and pc in out.columns:
+        try:
+            gk = out[pc].map(
+                lambda x: str(_control_points_project_group_key(x) or "").strip()
+            )
+        except Exception:
+            gk = out[pc].map(lambda x: str(x or "").strip().lower())
+        keys = keys.where(keys.str.strip() != "", gk)
+    keys = keys.fillna("").astype(str).str.strip().replace("", "__all__")
+    out["_snap_proj_key"] = keys
+
+    snap = out.loc[has].copy()
+    nosnap = out.loc[~has].copy()
+    latest = snap.groupby("_snap_proj_key", dropna=False)["_snap_ord"].transform("max")
+    snap = snap[snap["_snap_ord"] == latest]
+    out = pd.concat([snap, nosnap], ignore_index=False)
+    return out.drop(columns=["_snap_ord", "_snap_proj_key"], errors="ignore")
+
+
 def dedupe_msp_for_developer_projects(df: pd.DataFrame) -> pd.DataFrame:
     """
     ТЗ: нет дублирования проектов и задач в «Девелоперские проекты».
-    Сначала по идентификатору задачи MSP (если колонка есть и не пустая).
+    Сначала — только последний MSP-снимок на проект (snapshot_date / msp_* файл).
+    Затем по идентификатору задачи MSP (если колонка есть и не пустая).
     При **нескольких проектах** в одном кадре дедупликация по id ведётся в паре
-    с колонкой проекта — иначе совпадающие номера id у разных проектов схлопываются
-    и вехи пропадают (режим «Все проекты»).
+    с логическим ключом проекта — иначе совпадающие номера id у разных проектов
+    схлопываются и вехи пропадают (режим «Все проекты»).
     Иначе по (проект, задача) / по задаче.
 
     Если в колонке id часть строк без значения, нельзя делать ``drop_duplicates`` по всему кадру:
@@ -1730,7 +1789,7 @@ def dedupe_msp_for_developer_projects(df: pd.DataFrame) -> pd.DataFrame:
     """
     if df is None or getattr(df, "empty", True):
         return df
-    out = df.copy()
+    out = _keep_latest_msp_snapshot_rows(df.copy())
 
     # При нескольких MSP-снимках одного проекта строку на задачу берём из самой
     # свежей выгрузки по дате (snapshot_date), а не случайную по порядку склейки.
@@ -1758,33 +1817,41 @@ def dedupe_msp_for_developer_projects(df: pd.DataFrame) -> pd.DataFrame:
         ok = _series_id_valid(frame[id_col])
         if int(ok.sum()) == 0:
             return frame
+        # keep="first" после сортировки по snapshot_date desc
         part_ok = frame.loc[ok].drop_duplicates(subset=[id_col], keep="first")
         part_miss = frame.loc[~ok]
-        return pd.concat([part_miss, part_ok]).sort_index()
+        return pd.concat([part_miss, part_ok], ignore_index=True)
 
     def _dedupe_by_id_and_project_nonempty(
-        frame: pd.DataFrame, id_col: str, proj_col: str
+        frame: pd.DataFrame, id_col: str, proj_key_col: str
     ) -> pd.DataFrame:
-        """Составной ключ (проект, id): при объединении нескольких проектов в одном кадре ID MSP
-        могут совпадать между проектами — глобальный drop_duplicates(id) «съедает» вехи."""
+        """Составной ключ (логический проект, id): ID MSP могут совпадать между проектами."""
         ok = _series_id_valid(frame[id_col])
         if int(ok.sum()) == 0:
             return frame
         sub = frame.loc[ok]
-        if proj_col in sub.columns:
-            part_ok = sub.drop_duplicates(subset=[proj_col, id_col], keep="first")
+        if proj_key_col in sub.columns:
+            part_ok = sub.drop_duplicates(subset=[proj_key_col, id_col], keep="first")
         else:
             part_ok = sub.drop_duplicates(subset=[id_col], keep="first")
         part_miss = frame.loc[~ok]
-        return pd.concat([part_miss, part_ok]).sort_index()
+        return pd.concat([part_miss, part_ok], ignore_index=True)
 
     pc_for_id = _find_col(out, ["project name", "Проект", "Project", "проект"])
+    _proj_key_col = None
     _multi_proj = False
     if pc_for_id and pc_for_id in out.columns:
         try:
-            _multi_proj = int(out[pc_for_id].dropna().astype(str).str.strip().nunique()) > 1
+            out = out.copy()
+            out["_dev_proj_gk"] = out[pc_for_id].map(
+                lambda x: str(_control_points_project_group_key(x) or "").strip()
+                or str(x or "").strip().lower()
+            )
+            _proj_key_col = "_dev_proj_gk"
+            _multi_proj = int(out["_dev_proj_gk"].replace("", pd.NA).dropna().nunique()) > 1
         except Exception:
-            _multi_proj = False
+            _multi_proj = int(out[pc_for_id].dropna().astype(str).str.strip().nunique()) > 1
+            _proj_key_col = pc_for_id
 
     for id_c in (
         "unique id",
@@ -1796,20 +1863,38 @@ def dedupe_msp_for_developer_projects(df: pd.DataFrame) -> pd.DataFrame:
             continue
         if int(_series_id_valid(out[id_c]).sum()) == 0:
             continue
-        if _multi_proj and pc_for_id and pc_for_id in out.columns:
-            out = _dedupe_by_id_and_project_nonempty(out, id_c, pc_for_id).reset_index(drop=True)
+        if _multi_proj and _proj_key_col and _proj_key_col in out.columns:
+            out = _dedupe_by_id_and_project_nonempty(out, id_c, _proj_key_col)
         else:
-            out = _dedupe_by_id_nonempty(out, id_c).reset_index(drop=True)
-        return out
+            out = _dedupe_by_id_nonempty(out, id_c)
+        return out.drop(columns=["_dev_proj_gk"], errors="ignore").reset_index(drop=True)
     pc = _find_col(out, ["project name", "Проект", "Project", "проект"])
     tc = _task_name_col(out)
     if pc and tc and pc in out.columns and tc in out.columns:
         _score = out.apply(_msp_row_date_completeness, axis=1)
-        _ord = out.assign(_d=_score).sort_values(by="_d", ascending=False).drop(columns=["_d"])
-        return _ord.drop_duplicates(subset=[pc, tc], keep="first").reset_index(drop=True)
+        # Сначала полнота дат, затем свежесть снимка — не потерять июльский Откл.
+        _sd = (
+            pd.to_datetime(out["snapshot_date"], errors="coerce")
+            if "snapshot_date" in out.columns
+            else pd.Series(pd.NaT, index=out.index)
+        )
+        _ord = (
+            out.assign(_d=_score, _snap=_sd)
+            .sort_values(by=["_d", "_snap"], ascending=[False, False], kind="mergesort")
+            .drop(columns=["_d", "_snap"])
+        )
+        return (
+            _ord.drop_duplicates(subset=[pc, tc], keep="first")
+            .drop(columns=["_dev_proj_gk"], errors="ignore")
+            .reset_index(drop=True)
+        )
     if tc and tc in out.columns:
-        return out.drop_duplicates(subset=[tc], keep="first").reset_index(drop=True)
-    return out
+        return (
+            out.drop_duplicates(subset=[tc], keep="first")
+            .drop(columns=["_dev_proj_gk"], errors="ignore")
+            .reset_index(drop=True)
+        )
+    return out.drop(columns=["_dev_proj_gk"], errors="ignore")
 
 
 
@@ -4889,18 +4974,30 @@ def _pick_representative_milestone_row(
     *,
     pct_scale_max: Any = None,
 ) -> pd.Series:
-    """Строка-репрезентант вехи: приоритет задача с минимальным известным «% выполнения» (типичная просрочка/0%)."""
+    """Строка-репрезентант вехи: свежий snapshot, затем мин. % выполнения (просрочка/0%)."""
     if rows is None or getattr(rows, "empty", True):
         return rows.iloc[0]
+
+    work = rows
+    if "snapshot_date" in rows.columns and len(rows) > 1:
+        try:
+            _sd = pd.to_datetime(rows["snapshot_date"], errors="coerce")
+            if bool(_sd.notna().any()):
+                _max = _sd.max()
+                _latest = rows.loc[_sd == _max]
+                if _latest is not None and not getattr(_latest, "empty", True):
+                    work = _latest
+        except Exception:
+            work = rows
 
     def _both_dates_ok(rr: pd.Series) -> bool:
         pdt, fdt, _p = _msp_plan_fact_pct(rr)
         return (not pd.isna(pdt)) and (not pd.isna(fdt))
 
-    if "pct complete" in rows.columns:
+    if "pct complete" in work.columns:
         best_ix = None
         best_val: float | None = None
-        for ix, rr in rows.iterrows():
+        for ix, rr in work.iterrows():
             raw = rr.get("pct complete", np.nan)
             if isinstance(raw, pd.Series):
                 raw2 = raw.dropna()
@@ -4912,20 +5009,20 @@ def _pick_representative_milestone_row(
                 best_val = nv
                 best_ix = ix
         if best_ix is not None:
-            cand = rows.loc[best_ix]
+            cand = work.loc[best_ix]
             if _both_dates_ok(cand):
                 return cand
-            for _ix, rr in rows.iterrows():
+            for _ix, rr in work.iterrows():
                 if _both_dates_ok(rr):
                     return rr
             return cand
-    for _ix, rr in rows.iterrows():
+    for _ix, rr in work.iterrows():
         if _both_dates_ok(rr):
             return rr
-    tc = _task_name_col(rows)
-    if tc and tc in rows.columns:
-        return rows.sort_values(by=tc).iloc[0]
-    return rows.iloc[0]
+    tc = _task_name_col(work)
+    if tc and tc in work.columns:
+        return work.sort_values(by=tc).iloc[0]
+    return work.iloc[0]
 
 
 def _one_milestone_cell(
@@ -6280,7 +6377,7 @@ def render_control_points_dashboard(st, mdf: pd.DataFrame, table_css: str) -> No
 
 _DEV_MATRIX_CACHE_KEY = "_dev_matrix_cache_v1"
 # Инкремент при изменении логики `dedupe_msp_for_developer_projects` (сброс session-кэша dedupe).
-_DEV_DEDUPE_CACHE_VER = 5
+_DEV_DEDUPE_CACHE_VER = 6
 
 
 def _matrix_project_scope_tag(df: pd.DataFrame) -> str:
@@ -6303,6 +6400,8 @@ def _df_fingerprint(df: Optional[pd.DataFrame]) -> Tuple[Any, ...]:
     Не использует hash содержимого (дорого на больших MSP). Берёт shape, id
     объекта и хэш кортежа из (первый/последний индекс, первое/последнее
     значение в первом столбце). Если DataFrame подменён — отпечаток меняется.
+    Включает max(snapshot_date) и набор source-файлов — иначе после подмешивания
+    старого MSP-месяца кэш мог отдавать матрицу со «старыми» нулевыми Откл.
     """
     if df is None:
         return ("none",)
@@ -6315,6 +6414,31 @@ def _df_fingerprint(df: Optional[pd.DataFrame]) -> Tuple[Any, ...]:
         c0 = df.columns[0] if len(df.columns) else None
         first_val = "" if c0 is None else str(df.iloc[0, 0])[:64]
         last_val = "" if c0 is None else str(df.iloc[-1, 0])[:64]
+        snap_max = ""
+        if "snapshot_date" in df.columns:
+            try:
+                _sm = pd.to_datetime(df["snapshot_date"], errors="coerce").max()
+                if pd.notna(_sm):
+                    snap_max = pd.Timestamp(_sm).strftime("%Y-%m-%d")
+            except Exception:
+                snap_max = ""
+        src_tag = ""
+        src_col = next(
+            (c for c in ("__source_file", "source_file", "_source_file") if c in df.columns),
+            None,
+        )
+        if src_col is not None:
+            try:
+                srcs = sorted(
+                    {
+                        str(x).replace("\\", "/").split("/")[-1].strip().lower()
+                        for x in df[src_col].dropna().astype(str).tolist()
+                        if str(x).strip()
+                    }
+                )
+                src_tag = "|".join(srcs)[:400]
+            except Exception:
+                src_tag = ""
         return (
             id(df),
             tuple(df.shape),
@@ -6323,6 +6447,8 @@ def _df_fingerprint(df: Optional[pd.DataFrame]) -> Tuple[Any, ...]:
             str(last_idx),
             first_val,
             last_val,
+            snap_max,
+            src_tag,
         )
     except Exception:
         return ("err", id(df))

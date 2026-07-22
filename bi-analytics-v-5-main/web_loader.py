@@ -154,10 +154,24 @@ def _parse_snapshot_date(date_str: str):
     return None
 
 
+def _msp_source_project_bucket(source_file: Any) -> Optional[str]:
+    """Корень проекта из имени msp_<slug>_<date>.csv (независимо от регистра/подписи)."""
+    if source_file is None or (isinstance(source_file, float) and pd.isna(source_file)):
+        return None
+    stem = Path(str(source_file).replace("\\", "/").split("/")[-1]).stem
+    return _msp_project_bucket(stem)
+
+
 def _deduplicate_project_snapshots(df: pd.DataFrame) -> pd.DataFrame:
     """
     Для проектных данных из MSP: оставляет только последний снимок каждого
-    проекта (строки с максимальным snapshot_date по каждому project name).
+    проекта (строки с максимальным snapshot_date).
+
+    Группировка: сначала bucket из ``__source_file`` / ``source_file``
+    (msp_zhukovsky1_…), иначе точный ``project name``. Так июньский и июльский
+    файлы одного slug не остаются рядом из‑за разных подписей проекта
+    («zhukovsky1» vs «Жуковский») — иначе матрица Девелоперских смешивает
+    снимки и отклонения обнуляются (у старых выгрузок base end == plan end).
     Строки без snapshot_date оставляет нетронутыми.
     """
     if df is None or df.empty:
@@ -168,20 +182,36 @@ def _deduplicate_project_snapshots(df: pd.DataFrame) -> pd.DataFrame:
     df = df.copy()
     df["snapshot_date"] = pd.to_datetime(df["snapshot_date"], errors="coerce")
 
-    # Строки без snapshot_date или без project name — оставляем как есть
+    # Строки без snapshot_date — оставляем как есть
     has_snap = df["snapshot_date"].notna()
-    if "project name" in df.columns:
-        has_snap = has_snap & df["project name"].notna()
-
     if not has_snap.any():
         return df
 
     snap_part = df[has_snap].copy()
     no_snap_part = df[~has_snap].copy()
 
-    # Максимальная дата снимка на группу project name
-    latest = snap_part.groupby("project name")["snapshot_date"].transform("max")
+    src_col = next(
+        (c for c in ("__source_file", "source_file", "_source_file") if c in snap_part.columns),
+        None,
+    )
+    if src_col is not None:
+        _keys = snap_part[src_col].map(_msp_source_project_bucket)
+    else:
+        _keys = pd.Series([None] * len(snap_part), index=snap_part.index, dtype=object)
+    if "project name" in snap_part.columns:
+        _pn = snap_part["project name"].map(
+            lambda x: (
+                str(x).strip()
+                if x is not None and not (isinstance(x, float) and pd.isna(x)) and str(x).strip()
+                else None
+            )
+        )
+        _keys = _keys.where(pd.notna(_keys) & (_keys.astype(str).str.strip() != ""), _pn)
+    snap_part["_snap_proj_key"] = _keys.fillna("__all__").astype(str)
+
+    latest = snap_part.groupby("_snap_proj_key", dropna=False)["snapshot_date"].transform("max")
     snap_part = snap_part[snap_part["snapshot_date"] == latest]
+    snap_part = snap_part.drop(columns=["_snap_proj_key"], errors="ignore")
 
     result = pd.concat([no_snap_part, snap_part], ignore_index=True)
     return result
