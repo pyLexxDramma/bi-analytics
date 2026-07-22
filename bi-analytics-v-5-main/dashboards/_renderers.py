@@ -4440,6 +4440,11 @@ def _apply_finance_light_preview_chart_colors(fig) -> None:
                 bgcolor="rgba(255, 255, 255, 0.96)",
                 bordercolor="rgba(148, 163, 184, 0.55)",
             ),
+            modebar=dict(
+                bgcolor="rgba(255,255,255,0.92)",
+                color="#334155",
+                activecolor="#0f766e",
+            ),
         )
         fig.update_xaxes(
             tickfont=dict(color=_ax),
@@ -51296,10 +51301,10 @@ def dashboard_project_schedule_chart(df):
             margin=_cov_margin,
             showlegend=False,
             uirevision="gantt_project_schedule_covenants",
-            dragmode=False,
+            dragmode="zoom",
         )
         fig.update_yaxes(title=dict(text=""), fixedrange=True)
-        fig.update_xaxes(title_text="Дата", automargin=True, showgrid=True, fixedrange=True)
+        fig.update_xaxes(title_text="Дата", automargin=True, showgrid=True, fixedrange=False)
 
         try:
             _bar_dates = pd.concat([plan_end, fact_end], ignore_index=True).dropna().tolist()
@@ -51323,7 +51328,7 @@ def dashboard_project_schedule_chart(df):
                 _extra = timedelta(days=max(60.0, _span_days * 0.12))
                 lo_pad = pd.Timestamp(lo_pad) - _extra
                 hi_pad = pd.Timestamp(hi_pad) + _extra
-                fig.update_xaxes(range=[lo_pad, hi_pad], autorange=False, fixedrange=True)
+                fig.update_xaxes(range=[lo_pad, hi_pad], autorange=False, fixedrange=False)
                 tvals, ttext = _gantt_ru_date_ticks(lo_pad, hi_pad, max_ticks=policy.get("max_ticks", 22))
                 if tvals and ttext and len(tvals) == len(ttext):
                     fig.update_xaxes(
@@ -51351,7 +51356,7 @@ def dashboard_project_schedule_chart(df):
             margin=_cov_margin,
             showlegend=False,
         )
-        fig.update_xaxes(domain=[_x_domain_start, 1.0], fixedrange=True)
+        fig.update_xaxes(domain=[_x_domain_start, 1.0], fixedrange=False)
         return fig, fact_end_col, fact_label
 
     _readability = _gantt_readability_policy(plot_df)
@@ -51488,20 +51493,12 @@ def dashboard_project_schedule_chart(df):
         scroll_viewport_height=_scroll_h,
     )
 
-    # Масштаб по времени отключён во всех режимах графика проекта (оси фиксированы),
-    # поэтому убираем панель зума и scrollZoom, чтобы курсор не превращался в
-    # стрелки <-> и не появлялась неработающая панель (и в «Все»/«%», и в «Ковенантах»).
+    # Полный modebar (zoom/pan/±/autoscale/reset/PNG). Колёсико оставляем для
+    # прокрутки длинного Gantt в контейнере — scrollZoom выключен.
     _gantt_cfg_extra = {
         "scrollZoom": False,
-        "modeBarButtonsToRemove": [
-            "zoom2d",
-            "pan2d",
-            "zoomIn2d",
-            "zoomOut2d",
-            "autoScale2d",
-            "select2d",
-            "lasso2d",
-        ],
+        "modeBarButtons": _PLOTLY_MODEBAR_BUTTONS_FULL,
+        "modeBarButtonsToRemove": [],
     }
     with stage_timer("gantt: render_chart"):
         render_chart(

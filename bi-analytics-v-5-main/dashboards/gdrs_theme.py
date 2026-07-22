@@ -938,6 +938,30 @@ html body.gdrs-light-preview [data-testid="stPlotlyChart"] .modebar-group {{
   opacity: 1 !important;
   visibility: visible !important;
   pointer-events: auto !important;
+  display: flex !important;
+}}
+html body.gdrs-light-preview [data-testid="stPlotlyChart"] .modebar {{
+  background: rgba(255, 255, 255, 0.92) !important;
+}}
+html body.gdrs-light-preview [data-testid="stPlotlyChart"] .modebar-btn,
+html body.gdrs-light-preview [data-testid="stPlotlyChart"] a.modebar-btn {{
+  opacity: 1 !important;
+  visibility: visible !important;
+  display: inline-block !important;
+}}
+html body.gdrs-light-preview [data-testid="stPlotlyChart"] .modebar-btn path,
+html body.gdrs-light-preview [data-testid="stPlotlyChart"] .modebar-btn svg path,
+html body.gdrs-light-preview [data-testid="stPlotlyChart"] a.modebar-btn path {{
+  fill: #334155 !important;
+  stroke: #334155 !important;
+  opacity: 1 !important;
+}}
+html body.gdrs-light-preview [data-testid="stPlotlyChart"] .modebar-btn:hover path,
+html body.gdrs-light-preview [data-testid="stPlotlyChart"] .modebar-btn.active path,
+html body.gdrs-light-preview [data-testid="stPlotlyChart"] a.modebar-btn:hover path,
+html body.gdrs-light-preview [data-testid="stPlotlyChart"] a.modebar-btn.active path {{
+  fill: #0f766e !important;
+  stroke: #0f766e !important;
 }}
 html body.gdrs-light-preview .gdrs-summary-table-wrap tr.gdrs-total-row td,
 html body.gdrs-light-preview .gdrs-summary-table-wrap tr.bd-total-row td {{

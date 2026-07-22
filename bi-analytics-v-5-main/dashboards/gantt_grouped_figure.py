@@ -621,9 +621,9 @@ def build_grouped_plan_fact_gantt_figure(
         showlegend=False,
         bargap=0.78,
         bargroupgap=_GANTT_SCHEDULE_BARGROUPGAP,
-        uirevision="gantt_project_schedule_bars_v24",
+        uirevision="gantt_project_schedule_bars_v25",
         hovermode="closest",
-        dragmode=False,
+        dragmode="zoom",
     )
     if _y_name_ann:
         fig.update_layout(annotations=list(_y_name_ann))
@@ -632,7 +632,7 @@ def build_grouped_plan_fact_gantt_figure(
         tickformat=_CHART_PLOT_DATE_FMT,
         automargin=True,
         domain=[_x_domain_start, 1.0],
-        fixedrange=True,
+        fixedrange=False,
     )
     fig.update_yaxes(fixedrange=True)
 
@@ -726,7 +726,7 @@ def build_grouped_plan_fact_gantt_figure(
             _right_extra = pd.Timedelta(days=max(45.0, _span_days * 0.08))
             lo_pad = pd.Timestamp(lo_pad).normalize() - _left_extra
             hi_pad = pd.Timestamp(hi_pad).normalize() + _right_extra
-            fig.update_xaxes(range=[lo_pad, hi_pad], autorange=False, fixedrange=True)
+            fig.update_xaxes(range=[lo_pad, hi_pad], autorange=False, fixedrange=False)
         try:
             if lo_pad is not None and hi_pad is not None:
                 tvals, ttext = _gantt_ru_date_ticks(
@@ -785,7 +785,7 @@ def cached_grouped_gantt_figure(
     show_covenant_markers: bool,
     row_block_scale: float,
     allow_zero_duration_milestones: bool = False,
-    _fig_cache_version: int = 29,
+    _fig_cache_version: int = 30,
     _theme_light: bool = False,
 ) -> go.Figure:
     """Кэш построения fig — ускоряет rerun при тех же фильтрах."""
