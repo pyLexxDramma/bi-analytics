@@ -11173,6 +11173,34 @@ def dashboard_plan_fact_dates(df):
                     _seen_fc[lbl] = 1
                     _uniq_fc.append(lbl)
             local["_y"] = _uniq_fc
+        elif task_label_mode == "По лоту":
+            # ТЗ (замечание): в режиме «по лоту» на один лот приходится несколько
+            # задач уровня 5 → раньше рисовалось по полосе на задачу с одинаковой
+            # подписью (подписи слева накладывались). Схлопываем дубликаты лота в
+            # одну строку и берём «последний срок» — максимум «Базовое окончание»
+            # и «Окончание» по задачам лота.
+            local["_y_simple"] = local.apply(_pf_simple_task_label, axis=1)
+            _lot_rows: list[dict] = []
+            for _lbl, _g in local.groupby("_y_simple", sort=False):
+                _be_max = pd.to_datetime(_g[fe_col], errors="coerce").max()
+                _pe_max = pd.to_datetime(_g[pe_col], errors="coerce").max()
+                _dev = np.nan
+                if pd.notna(_be_max) and pd.notna(_pe_max):
+                    _dev = (_be_max - _pe_max).total_seconds() / 86400.0
+                _lot_rows.append(
+                    {
+                        "_y": _lbl,
+                        "_y_simple": _lbl,
+                        fe_col: _be_max,
+                        pe_col: _pe_max,
+                        "plan_end_diff": _dev,
+                    }
+                )
+            local = (
+                pd.DataFrame(_lot_rows)
+                .sort_values("plan_end_diff", ascending=True, na_position="last")
+                .reset_index(drop=True)
+            )
         else:
             local["_y_simple"] = local.apply(_pf_simple_task_label, axis=1)
             _seen_br: dict[str, int] = {}
@@ -27285,8 +27313,14 @@ def _gdrs_dynamics_chart_panel(
     plan_agg: str = "month_avg",
     skud_agg: str = "month_avg",
     theme: str = "dark",
+    pairs_override=None,
 ):
-    """Линейный график динамики — fragment: смена группировки без полной перезагрузки страницы."""
+    """Линейный график динамики — fragment: смена группировки без полной перезагрузки страницы.
+
+    pairs_override: если факт по выбранным фильтрам пуст (у подрядчика есть план, но нет
+    факта СКУД), пары «проект×подрядчик» для линии плана берём отсюда (из главной таблицы),
+    иначе линию плана не на чем построить.
+    """
     import plotly.graph_objects as _go
     from dashboards.gdrs_resursi import (
         gdrs_dynamics_build_series,
@@ -27334,9 +27368,22 @@ def _gdrs_dynamics_chart_panel(
         f"(по выбранным месяцам в фильтре «Месяц»). "
         f"План и факт — **среднее за день** в выбранном периоде группировки.{_wk_note}"
     )
-    uniq_pairs = fact_dyn[
-        ["project_id", "project_name", "contractor_id", "contractor_name"]
-    ].drop_duplicates()
+    if (
+        (fact_dyn is None or getattr(fact_dyn, "empty", True))
+        and pairs_override is not None
+        and not getattr(pairs_override, "empty", True)
+    ):
+        uniq_pairs = pairs_override[
+            ["project_id", "project_name", "contractor_id", "contractor_name"]
+        ].drop_duplicates()
+        st.caption(
+            "У выбранного подрядчика есть план из 1С, но нет факта СКУД за период — "
+            "показана только линия плана (факт = 0)."
+        )
+    else:
+        uniq_pairs = fact_dyn[
+            ["project_id", "project_name", "contractor_id", "contractor_name"]
+        ].drop_duplicates()
     with st.spinner("Строим график динамики…"):
         dyn = gdrs_dynamics_build_series(
             fact_dyn, dyn_from, dyn_to, agg_kind,
@@ -28460,6 +28507,7 @@ def dashboard_gdrs(df, vid_locked: str | None = None, *, theme: str | None = Non
         term_index=_term_index,
         plan_as_of=_pd.Timestamp(_plan_snap).normalize(),
         plan_aggregate_loader=_gdrs_plan_loader(_version_id, _db_mtime),
+        resursi_all_fact=long_fact,
     )
     if main_t is None or main_t.empty:
         st.info("Нет данных для выбранных фильтров.")
@@ -28881,12 +28929,38 @@ def dashboard_gdrs(df, vid_locked: str | None = None, *, theme: str | None = Non
     if sel_contractors:
         fact_dyn = fact_dyn[fact_dyn["contractor_name"].isin(sel_contractors)]
     plan_col = "plan_workers" if sel_vid.casefold() == "рабочие" else "plan_equipment"
-    if fact_dyn.empty:
+    # Факта нет, но у подрядчика есть план → строим динамику плана по парам из главной
+    # таблицы (иначе «Нет данных для графика динамики» при наличии плана вводит в заблуждение).
+    _dyn_plan_pairs = None
+    if fact_dyn.empty and main_t is not None and not main_t.empty:
+        _dyn_detail = main_t[main_t["row_kind"] == "row"].copy()
+        if not _dyn_detail.empty:
+            _dyn_detail = _dyn_detail[
+                pd.to_numeric(_dyn_detail["plan"], errors="coerce").fillna(0) > 0
+            ]
+        if not _dyn_detail.empty:
+            _cols = ["project_id", "project_name", "contractor_id", "contractor_name"]
+            for _c in _cols:
+                if _c not in _dyn_detail.columns:
+                    _dyn_detail[_c] = ""
+            _dyn_plan_pairs = _dyn_detail[_cols].drop_duplicates()
+    if fact_dyn.empty and (_dyn_plan_pairs is None or _dyn_plan_pairs.empty):
         st.info("Нет данных для графика динамики.")
     else:
-        fact_dyn["date"] = _pd.to_datetime(fact_dyn["date"])
-        _dyn_from = date_from.normalize() if _pd.notna(date_from) else fact_dyn["date"].min().normalize()
-        _dyn_to = date_to.normalize() if _pd.notna(date_to) else fact_dyn["date"].max().normalize()
+        if not fact_dyn.empty:
+            fact_dyn["date"] = _pd.to_datetime(fact_dyn["date"])
+        if _pd.notna(date_from):
+            _dyn_from = date_from.normalize()
+        elif not fact_dyn.empty:
+            _dyn_from = fact_dyn["date"].min().normalize()
+        else:
+            _dyn_from = _pd.Timestamp.today().normalize()
+        if _pd.notna(date_to):
+            _dyn_to = date_to.normalize()
+        elif not fact_dyn.empty:
+            _dyn_to = fact_dyn["date"].max().normalize()
+        else:
+            _dyn_to = _dyn_from
         _gdrs_dynamics_chart_panel(
             fact_dyn,
             _dyn_from.isoformat(),
@@ -28902,6 +28976,7 @@ def dashboard_gdrs(df, vid_locked: str | None = None, *, theme: str | None = Non
             plan_agg=_plan_agg,
             skud_agg=_skud_agg,
             theme=theme,
+            pairs_override=_dyn_plan_pairs,
         )
 
     st.markdown("---")
@@ -34925,7 +35000,13 @@ def _pd_dynamics_line_tasks_mask(df: pd.DataFrame, masks: dict) -> pd.Series:
     parent_names = _pd_msp_immediate_parent_names(df, hier_col, name_col)
     parent_pd = parent_names.map(_pd_msp_parent_is_pd_stage)
     razdel_m = df[name_col].astype(str).str.contains("раздел", case=False, na=False)
-    strict = lv_num.eq(5) & parent_pd & razdel_m
+    # ПД-раздел под этапом «Проектная документация»: либо имя содержит «раздел»,
+    # либо есть шифр ПД/РД. Иначе теряются разделы с шифром без слова «раздел»
+    # в названии (ТЗ «Задание на проектирование», ТБЭ «Проект „Требования…“»),
+    # и «План по проекту (БП)» занижается (Дмитровский: 17 вместо 20 по источнику).
+    _cipher_col, _cipher_ok = _pd_cipher_filled_mask(df)
+    _cipher_ok = _cipher_ok.fillna(False) if _cipher_col else pd.Series(False, index=df.index)
+    strict = lv_num.eq(5) & parent_pd & (razdel_m | _cipher_ok)
     if strict.any():
         return strict
     dyn = masks.get("dynamics_mask", empty).fillna(False)

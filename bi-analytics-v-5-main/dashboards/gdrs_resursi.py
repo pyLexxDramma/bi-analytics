@@ -4208,6 +4208,7 @@ def build_main_table(
     term_index: Optional[GdrsTerminationIndex] = None,
     plan_as_of: Optional[pd.Timestamp] = None,
     plan_aggregate_loader: Optional[Callable[[pd.Timestamp], pd.DataFrame]] = None,
+    resursi_all_fact: Optional[pd.DataFrame] = None,
 ) -> pd.DataFrame:
     """Сборка главной таблицы (Скрин 11): Контрагент × недели × отклонение × дельта.
 
@@ -4244,6 +4245,26 @@ def build_main_table(
 
     plan_col = "plan_workers" if vid.casefold() == "рабочие" else "plan_equipment"
     by_id, by_id_name, by_norm = _build_plan_lookup(plan_work, plan_col)
+
+    # Эталон (AI_DATA_RULES §70): состав строк отчёта = пересечение other_*_resursi ∩ 1C_Kontr.
+    # План берётся из Dogovor, но контрагент попадает в отчёт только если он присутствует
+    # в resursi. Иначе plan-only контрагенты из Dogovor (например, есть в Kontr, но нет в
+    # resursi) протекают в отчёт. Набор допустимых контрагентов — по ключу `_gk_ctr`
+    # (id/имя из Kontr) из ПОЛНОГО resursi (все месяцы), а не только выбранного периода.
+    _resursi_ctr_keys: Optional[set] = None
+    _membership_src = resursi_all_fact if resursi_all_fact is not None else long_fact
+    if _membership_src is not None and not _membership_src.empty:
+        _mem = _membership_src
+        if "vid_resursa" in _mem.columns:
+            _mem = _mem[_mem["vid_resursa"].astype(str).str.casefold() == vid.casefold()]
+        _mem_cols = [c for c in ("contractor_id", "contractor_name") if c in _mem.columns]
+        if _mem is not None and not _mem.empty and _mem_cols:
+            _mem = _mem[_mem_cols].drop_duplicates()
+            _mem = _gdrs_add_pair_keys(_mem, kontr_index, dedupe_fact=False)
+            _mem = gdrs_drop_excluded_contractors(_mem)
+            if _mem is not None and not _mem.empty and "_gk_ctr" in _mem.columns:
+                _resursi_ctr_keys = set(_mem["_gk_ctr"].astype(str))
+
     _plan_snap = pd.Timestamp(plan_as_of).normalize() if plan_as_of is not None and pd.notna(plan_as_of) else (
         pd.Timestamp(date_to).normalize() if date_to is not None and pd.notna(date_to) else None
     )
@@ -4298,7 +4319,39 @@ def build_main_table(
             pivot[col] = []
     pivot.rename(columns={1: "w1", 2: "w2", 3: "w3", 4: "w4", 5: "w5", 6: "w6"}, inplace=True)
 
-    plan_pairs_df = _filter_plan_slice(plan_work, projects, contractors)
+    # Обнаружение пар «проект×подрядчик» из плана. На мультимесячном периоде со
+    # «Среднее за месяц» план подрядчика может быть >0 в одном из месяцев и 0 на срез
+    # date_to. Если искать plan-only пары только по срезу date_to (plan_work), такой
+    # подрядчик (план есть, факта нет) теряется целиком: main_t пустеет → «Нет данных
+    # для выбранных фильтров», хотя в отдельном месяце он виден. Поэтому для мультимесяца
+    # пары ищем по ОБЪЕДИНЕНИЮ снапшотов всех месяцев периода (значение плана всё равно
+    # усредняется помесячно ниже через gdrs_plan_period_month_weighted_average).
+    _plan_pairs_source = plan_work
+    _pairs_multi_month = (
+        gdrs_agg_week_num(plan_agg) is None
+        and date_from is not None
+        and date_to is not None
+        and pd.notna(date_from)
+        and pd.notna(date_to)
+        and not _gdrs_single_calendar_month(date_from, date_to)
+        and plan_aggregate_loader is not None
+    )
+    if _pairs_multi_month:
+        _pp_lo = pd.Timestamp(date_from).normalize()
+        _pp_hi = pd.Timestamp(date_to).normalize()
+        _pp_frames: list[pd.DataFrame] = []
+        for _pp_per in pd.period_range(_pp_lo.to_period("M"), _pp_hi.to_period("M"), freq="M"):
+            _pp_snap = pd.Timestamp(min(_pp_hi, _pp_per.end_time.normalize())).normalize()
+            _pp_df = plan_aggregate_loader(_pp_snap)
+            if _pp_df is not None and not _pp_df.empty:
+                _pp_frames.append(_pp_df)
+        if _pp_frames:
+            _plan_union = pd.concat(_pp_frames, ignore_index=True)
+            _plan_union = _gdrs_add_pair_keys(_plan_union, kontr_index, dedupe_fact=False)
+            _plan_union = gdrs_drop_excluded_contractors(_plan_union)
+            _plan_pairs_source = _plan_union
+
+    plan_pairs_df = _filter_plan_slice(_plan_pairs_source, projects, contractors)
     if plan_pairs_df is not None and not plan_pairs_df.empty:
         plan_pairs_df = plan_pairs_df.copy()
         if "_gk_proj" not in plan_pairs_df.columns:
@@ -4311,6 +4364,11 @@ def build_main_table(
             pass
         plan_pairs_df["_plan_val"] = pd.to_numeric(plan_pairs_df[plan_col], errors="coerce").fillna(0.0)
         plan_pairs_df = plan_pairs_df[plan_pairs_df["_plan_val"] > 0]
+        # Эталон resursi ∩ Kontr: plan-only контрагента добавляем, только если он есть в resursi.
+        if _resursi_ctr_keys is not None and not plan_pairs_df.empty and "_gk_ctr" in plan_pairs_df.columns:
+            plan_pairs_df = plan_pairs_df[
+                plan_pairs_df["_gk_ctr"].astype(str).isin(_resursi_ctr_keys)
+            ]
         if not plan_pairs_df.empty:
             plan_ids = (
                 plan_pairs_df.groupby(pair_cols, dropna=False)
