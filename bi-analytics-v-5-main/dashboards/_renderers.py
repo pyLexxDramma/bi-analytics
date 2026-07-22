@@ -2360,18 +2360,26 @@ def _deviations_maket_resolve_task_col(frame: pd.DataFrame) -> str | None:
 
 
 def _deviations_maket_enrich_ancestor_keys(work_m: pd.DataFrame) -> pd.DataFrame:
-    """L2 — outline; «Строение» — предок с «Уровень»=3, иначе outline tier 3."""
+    """L2 — outline; «Строение» — предок с «Уровень»=3, иначе outline tier 3.
+
+    Ключи пишутся позиционно (``.to_numpy()``): ``_dev_tasks_build_ancestor_keys``
+    делает ``reset_index``, и присвоение Series по индексу ломало L3 на срезах
+    с нестандартным index (пустые/чужие «Строение» и заметки по неверной связи).
+    """
     _tc_m = _deviations_maket_resolve_task_col(work_m)
     if not _tc_m:
         return work_m
-    outline3 = pd.Series("", index=work_m.index, dtype=object)
+    n = len(work_m)
+    outline3 = pd.Series([""] * n, dtype=object)
+    lvl2 = pd.Series([""] * n, dtype=object)
+    lvl_num = pd.Series([np.nan] * n, dtype=float)
     _lc_m = _dev_tasks_resolve_level_column(work_m)
     if _lc_m:
         wo = _dev_tasks_build_ancestor_keys(work_m, _lc_m, _tc_m)
-        work_m["_dt_lvl2_key"] = wo["_dt_lvl2_key"]
-        work_m["_dt_lvl_num"] = wo["_dt_lvl_num"]
-        outline3 = wo["_dt_lvl3_key"].astype(str).str.strip()
-    level3 = pd.Series("", index=work_m.index, dtype=object)
+        lvl2 = wo["_dt_lvl2_key"].astype(str).str.strip().reset_index(drop=True)
+        lvl_num = pd.to_numeric(wo["_dt_lvl_num"], errors="coerce").reset_index(drop=True)
+        outline3 = wo["_dt_lvl3_key"].astype(str).str.strip().reset_index(drop=True)
+    level3 = pd.Series([""] * n, dtype=object)
     if "level" in work_m.columns:
         wl = _dev_tasks_build_ancestor_keys(
             work_m,
@@ -2380,9 +2388,30 @@ def _deviations_maket_enrich_ancestor_keys(work_m: pd.DataFrame) -> pd.DataFrame
             block_outline_level=2,
             building_outline_level=3,
         )
-        level3 = wl["_dt_lvl3_key"].astype(str).str.strip()
+        level3 = wl["_dt_lvl3_key"].astype(str).str.strip().reset_index(drop=True)
     _empty = lambda s: s.eq("") | s.str.lower().isin(["nan", "none", "nat"])
-    work_m["_dt_lvl3_key"] = level3.where(~_empty(level3), outline3)
+    # ТЗ: «Строение» = уровень 3 (колонка «Уровень»). Outline (level structure)
+    # — только fallback для предка; имя самой L5-задачи строением не считаем
+    # (иначе в фильтре появляются «Завершение СМР по блоку…» = название задачи,
+    # а не реальное строение, и выбор даёт пустой макет в текущем периоде).
+    work_m = work_m.copy()
+    work_m["_dt_lvl2_key"] = lvl2.to_numpy()
+    work_m["_dt_lvl_num"] = lvl_num.to_numpy()
+    task_labels = (
+        work_m[_tc_m]
+        .map(lambda x: str(x).strip() if pd.notna(x) else "")
+        .reset_index(drop=True)
+    )
+    level_col_num = (
+        pd.to_numeric(work_m["level"], errors="coerce").reset_index(drop=True)
+        if "level" in work_m.columns
+        else pd.Series([np.nan] * n, dtype=float)
+    )
+    outline_ok = ~_empty(outline3)
+    # Нельзя: outline3 == имя строки при «Уровень» ≠ 3 (самоназначение L5→строение).
+    self_as_building = outline3.eq(task_labels) & level_col_num.ne(3)
+    outline_use = outline3.where(outline_ok & ~self_as_building, "")
+    work_m["_dt_lvl3_key"] = level3.where(~_empty(level3), outline_use).to_numpy()
     return work_m
 
 
@@ -2440,57 +2469,48 @@ def _deviations_notes_pref_score(note: str) -> tuple[int, int]:
     return (score, len(str(note or "")))
 
 
-def _deviations_block_notes_lookup(
+def _deviations_notes_by_task_id(
     full_df: pd.DataFrame, notes_col: str | None
-) -> dict[str, dict[str, str]]:
-    """Заметки L3 «Блок …» по проекту: ключи `by_name` (строение) и `by_token`."""
-    empty: dict[str, dict[str, str]] = {"by_name": {}, "by_token": {}}
+) -> dict[str, str]:
+    """Заметки только строк ур. 5 по ключу ``проект||unique id``."""
+    out: dict[str, str] = {}
     if (
         full_df is None
         or getattr(full_df, "empty", True)
         or not notes_col
         or notes_col not in full_df.columns
-        or "level" not in full_df.columns
     ):
-        return empty
-    tc = _deviations_maket_resolve_task_col(full_df)
-    if not tc:
-        return empty
-    out_name: dict[str, str] = {}
-    out_tok: dict[str, str] = {}
-    best_name: dict[str, tuple[int, int]] = {}
-    best_tok: dict[str, tuple[int, int]] = {}
-    lvl = pd.to_numeric(full_df["level"], errors="coerce")
-    for idx in full_df.index[lvl == 3]:
+        return out
+    id_col = _deviations_maket_task_id_col(full_df)
+    if not id_col:
+        return out
+    if "level" in full_df.columns:
+        lvl = pd.to_numeric(full_df["level"], errors="coerce")
+        idxs = full_df.index[lvl == 5]
+    else:
+        idxs = full_df.index
+    for idx in idxs:
         note = _clean_display_str(full_df.at[idx, notes_col])
         if not note:
             continue
-        proj = ""
-        if "project name" in full_df.columns:
-            proj = _clean_display_str(full_df.at[idx, "project name"])
-        tname = _clean_display_str(full_df.at[idx, tc])
-        if not tname:
+        tid = _clean_display_str(full_df.at[idx, id_col])
+        if not tid:
             continue
-        sc = _deviations_notes_pref_score(note)
-        nk = f"{proj.casefold()}||{tname.casefold()}"
-        if sc > best_name.get(nk, (-999, -1)):
-            best_name[nk] = sc
-            out_name[nk] = note
-        # короткое имя без площади — тоже ключ строения
-        base = re.sub(r"\s*\([^)]*m2[^)]*\)\s*$", "", tname, flags=re.I)
-        base = re.sub(r"\s*\([^)]*м2[^)]*\)\s*$", "", base, flags=re.I).strip()
-        if base and base.casefold() != tname.casefold():
-            nk2 = f"{proj.casefold()}||{base.casefold()}"
-            if sc > best_name.get(nk2, (-999, -1)):
-                best_name[nk2] = sc
-                out_name[nk2] = note
-        tok = _deviations_block_token_from_task_name(tname)
-        if tok:
-            tk = f"{proj.casefold()}||{tok}"
-            if sc > best_tok.get(tk, (-999, -1)):
-                best_tok[tk] = sc
-                out_tok[tk] = note
-    return {"by_name": out_name, "by_token": out_tok}
+        proj = (
+            _clean_display_str(full_df.at[idx, "project name"])
+            if "project name" in full_df.columns
+            else ""
+        )
+        out[f"{proj.casefold()}||{tid}"] = note
+    return out
+
+
+def _deviations_block_notes_lookup(
+    full_df: pd.DataFrame, notes_col: str | None
+) -> dict[str, dict[str, str]]:
+    """Устарело: L3-заметки блоков больше не подмешиваются в строки L5."""
+    _ = full_df, notes_col
+    return {"by_name": {}, "by_token": {}}
 
 
 def _deviations_maket_row_note(
@@ -2499,17 +2519,30 @@ def _deviations_maket_row_note(
     notes_col: str | None,
     *,
     block_notes_lookup: dict[str, dict[str, str]] | None = None,
+    notes_by_id: dict[str, str] | None = None,
 ) -> str:
-    """Заметки только своей строки L5 (по «Названию задачи» из исходника).
+    """Заметки строго своей задачи L5, без L3/чужих строк.
 
-    Раньше при пустой заметке L5 подтягивалась заметка L3-предка «Блок …»
-    (по строению или токену «Блок X»). Это приводило к тому, что штатная
-    заметка блока приклеивалась к посторонним листовым задачам и могла
-    относиться к другой задаче/проекту. По ТЗ заказчика заметка должна
-    строго соответствовать задаче уровня 5 из исходника — не заимствуем.
+    Раньше при пустой заметке L5 подтягивалась заметка L3 «Блок …» по строению
+    или токену — штат блока попадал на чужие задачи/проекты.
     """
-    if notes_col and notes_col in frame.columns:
-        return _clean_display_str(row.get(notes_col))
+    _ = block_notes_lookup
+    if notes_col and notes_col in getattr(frame, "columns", []):
+        own = _clean_display_str(row.get(notes_col))
+        if own:
+            return own
+    id_col = _deviations_maket_task_id_col(frame)
+    if notes_by_id and id_col:
+        tid = _clean_display_str(row.get(id_col))
+        if tid:
+            proj = (
+                _clean_display_str(row.get("project name"))
+                if "project name" in getattr(frame, "columns", [])
+                else ""
+            )
+            hit = notes_by_id.get(f"{proj.casefold()}||{tid}")
+            if hit:
+                return hit
     return ""
 
 
@@ -3144,7 +3177,7 @@ def build_deviations_maket_export_df(
     _src = notes_source_df if notes_source_df is not None else table_reason_df
     if _src is not None and not getattr(_src, "empty", True):
         _src = _deviations_maket_attach_ancestor_keys(_src.copy())
-    _block_notes = _deviations_block_notes_lookup(_src, notes_col_m)
+    _notes_by_id = _deviations_notes_by_task_id(_src, notes_col_m)
     _id_col_m = _deviations_maket_task_id_col(maket_df)
     _maket_out = []
     for _, rr in maket_df.iterrows():
@@ -3176,7 +3209,7 @@ def build_deviations_maket_export_df(
                     rr,
                     maket_df,
                     notes_col_m,
-                    block_notes_lookup=_block_notes,
+                    notes_by_id=_notes_by_id,
                 ),
             }
         )
@@ -3201,7 +3234,7 @@ def _render_deviations_maket_table(
     _src = notes_source_df if notes_source_df is not None else table_reason_df
     if _src is not None and not getattr(_src, "empty", True):
         _src = _deviations_maket_attach_ancestor_keys(_src.copy())
-    _block_notes = _deviations_block_notes_lookup(_src, notes_col_m)
+    _notes_by_id = _deviations_notes_by_task_id(_src, notes_col_m)
 
     if maket_df.empty:
         st.info(
@@ -3261,7 +3294,7 @@ def _render_deviations_maket_table(
         ed_s = str(int(round(float(ed), 0))) if pd.notna(ed) else ""
         rs = _clean_display_str(rr.get("reason of deviation"))
         nt = _deviations_maket_row_note(
-            rr, maket_df, notes_col_m, block_notes_lookup=_block_notes
+            rr, maket_df, notes_col_m, notes_by_id=_notes_by_id
         )
         tid = ""
         if _id_col_m and _id_col_m in maket_df.columns:
@@ -5846,23 +5879,44 @@ def _deviations_l3_building_option_labels(
     return _gantt_dedupe_block_filter_values(raw)
 
 
+def _deviations_mask_by_building_key(
+    df: pd.DataFrame, sel_building: str
+) -> pd.Series | None:
+    """Маска строк с «Строение» = выбранному значению (как в детальной таблице)."""
+    if df is None or getattr(df, "empty", True) or "_dt_lvl3_key" not in df.columns:
+        return None
+    s_raw = _clean_display_str(sel_building)
+    if not s_raw or s_raw.lower() in ("все",):
+        return None
+    s_g = _deviations_gantt_like_task_label(s_raw) or s_raw
+    col = df["_dt_lvl3_key"].map(_clean_display_str)
+    col_g = col.map(_deviations_gantt_like_task_label)
+    return (col == s_raw) | (col == s_g) | (col_g == s_g)
+
+
 def _deviations_filter_df_under_l3_building(
     df: pd.DataFrame,
     sel_building: str,
 ) -> pd.DataFrame:
-    """Срез строк под выбранной задачей уровня 3 — колонки уровня как у ганта на plan-строках."""
+    """Срез по строению: сначала ``_dt_lvl3_key`` (как в таблице), иначе поддерево L3."""
     if df is None or getattr(df, "empty", True):
         return df
     s_raw = str(sel_building).strip()
     if not s_raw or s_raw.lower() in ("", "все", "nan", "none"):
         return df
-    p = _deviations_plot_df_plan_rows_like_gantt(df)
+    work = df
+    if "_dt_lvl3_key" not in work.columns:
+        work = _deviations_maket_attach_ancestor_keys(work.copy())
+    _key_mask = _deviations_mask_by_building_key(work, s_raw)
+    if _key_mask is not None and bool(_key_mask.any()):
+        return work.loc[_key_mask].copy()
+    p = _deviations_plot_df_plan_rows_like_gantt(work)
     lc = _deviations_resolve_level_col_like_gantt(p) if not p.empty else None
     tc = _deviations_resolve_task_col(p) if not p.empty else None
-    if not lc or not tc or lc not in df.columns or tc not in df.columns:
-        return df.iloc[0:0].copy()
+    if not lc or not tc or lc not in work.columns or tc not in work.columns:
+        return work.iloc[0:0].copy()
     s_key = _deviations_gantt_like_task_label(s_raw) or s_raw
-    work = df.reset_index(drop=True)
+    work = work.reset_index(drop=True)
     _ln = pd.to_numeric(work[lc], errors="coerce")
     _nm = work[tc].map(_deviations_gantt_like_task_label)
     _mask = (_ln == 3) & (_nm.astype(str).str.strip() == str(s_key).strip())
@@ -6388,13 +6442,12 @@ def _gantt_building_filter_values_for_df(
 
 
 def _deviations_building_keys_with_deviations(work: pd.DataFrame):
-    """Множество ключей строений (L3), под которыми есть строки макета отклонений.
+    """Множество подписей «Строение» из детальной таблицы макета (как в UI).
 
     Возвращает:
-    - set(cleaned L3 label) — если у среза есть отклонения с распознанным предком-строением;
-    - set() — если отклонений в срезе нет вовсе (строения фильтровать не по чему);
-    - None — отклонения есть, но предок-строение не распознан (нельзя надёжно сузить —
-      оставляем полный список, чтобы не прятать валидные опции).
+    - set(label) — строения, которые реально видны в макете отклонений;
+    - set() — отклонений нет;
+    - None — макет есть, но колонка строения не построена (fallback на структуру).
     """
     if work is None or getattr(work, "empty", True):
         return set()
@@ -6406,31 +6459,25 @@ def _deviations_building_keys_with_deviations(work: pd.DataFrame):
         return set()
     if "_dt_lvl3_key" not in maket.columns:
         return None
+    # Как в таблице: _clean_display_str, без gantt-нормализации, иначе
+    # «Завершение СМР» / «Блок U1.U2.» выпадают при пересечении со структурой L3.
     keys = {
-        _deviations_gantt_like_task_label(x)
+        _clean_display_str(x)
         for x in maket["_dt_lvl3_key"].dropna().astype(str).tolist()
     }
-    keys = {k for k in keys if k and k.lower() not in ("nan", "none", "nat")}
-    # Макет есть, но ни одна строка не привязана к строению L3 (напр. отклонение
-    # под блоком «Ковенанты», у которого нет L3): фильтровать «Строение» не по чему —
-    # прячем варианты (остаётся только «Все»), а не показываем всю структуру проекта.
-    return keys
+    return {k for k in keys if k}
 
 
 def _deviations_scope_building_opts_to_deviations(opts: list[str], dev_keys) -> list[str]:
-    """Оставить среди опций «Строение» только те, под которыми есть отклонения."""
+    """Опции «Строение»: приоритет — подписи из макета (детальная таблица)."""
     if dev_keys is None:
         return opts
     if not dev_keys:
         return []
-    # Оставляем только строения, под которыми есть отклонения. Если ни одна опция
-    # не сопоставилась (напр. все отклонения под блоком «Ковенанты» без L3-строения),
-    # возвращаем пусто → в «Строение» останется только «Все». Полный список структуры
-    # здесь показывать нельзя: он не отражает фактические отклонения.
-    return [
-        o for o in (opts or [])
-        if _deviations_gantt_like_task_label(o) in dev_keys
-    ]
+    # Источник истины — строения из детальной таблицы. Пересечение со списком
+    # узлов level==3 структуры отбрасывало «Завершение СМР» (level=5,
+    # level structure=3 под Ковенантами) и оставляло только «Общие работы».
+    return _gantt_dedupe_block_filter_values(sorted(dev_keys))
 
 
 def _deviations_scope_col_building_opts_to_deviations(
@@ -6498,16 +6545,22 @@ def _deviations_building_select_options(
     if work.empty:
         return []
 
+    # Сначала строения из детальной таблицы макета (в т.ч. «Завершение СМР»).
     dev_keys = _deviations_building_keys_with_deviations(work)
+    if dev_keys:
+        return _gantt_dedupe_block_filter_values(sorted(dev_keys))
+    if dev_keys is not None:
+        # Макет пуст по строениям — не подставляем всю структуру проекта.
+        return []
 
     level_col = _deviations_resolve_level_col_like_gantt(work)
     task_col = _deviations_resolve_task_col(work)
     if level_col and task_col:
         opts = _deviations_l3_building_option_labels(work, level_col, task_col)
         if opts:
-            return _deviations_scope_building_opts_to_deviations(opts, dev_keys)
+            return opts
 
-    opts = _gantt_building_filter_values_for_df(
+    return _gantt_building_filter_values_for_df(
         work,
         level_col=level_col,
         task_col=task_col,
@@ -6515,7 +6568,6 @@ def _deviations_building_select_options(
             building_col if building_col and building_col in work.columns else None
         ),
     )
-    return _deviations_scope_building_opts_to_deviations(opts, dev_keys)
 
 
 def _deviations_render_building_selectbox(
@@ -8755,7 +8807,24 @@ def dashboard_dynamics_of_deviations(df, hide_shared_filters=False):
         _pm_tbl = _pm_tbl.sort_values(["project name", "_sort_key"]).drop(
             columns=["_sort_key"]
         )
+        # Хронологический порядок периодов — до format_period_ru (Period/Timestamp).
+        _pm_period_order = [
+            format_period_ru(p)
+            for p in sorted(
+                _pm_tbl["period"].dropna().unique().tolist(),
+                key=_dynamics_period_sort_key,
+            )
+        ]
         _pm_tbl["period"] = _pm_tbl["period"].map(format_period_ru)
+        if "project name" in _pm_tbl.columns:
+            _pm_tbl = _project_column_apply_canonical(_pm_tbl, "project name")
+            _pm_gcols = ["project name", "period"]
+            _pm_agg2: dict = {"_maket_cnt": "sum"}
+            if "Месяц выгрузки файла" in _pm_tbl.columns:
+                _pm_agg2["Месяц выгрузки файла"] = "first"
+            _pm_tbl = (
+                _pm_tbl.groupby(_pm_gcols, observed=False).agg(_pm_agg2).reset_index()
+            )
         _pm_tbl = _pm_tbl.rename(
             columns={
                 "project name": "Проект",
@@ -8765,6 +8834,10 @@ def dashboard_dynamics_of_deviations(df, hide_shared_filters=False):
         )
         _cnt_col = "Количество отклонений"
         _label_cols = {"Проект", "Период (месяц)", "Месяц выгрузки файла"}
+        # Источник сводного графика = эта же таблица (до строки «Итого»),
+        # иначе периоды из grouped_data/Categorical расходились с таблицей
+        # (Дмитровский «Май» уезжал в «Июнь» на графике).
+        _pm_chart_df = _pm_tbl.copy()
         _total_row: dict = {}
         for col in _pm_tbl.columns:
             cl = str(col).strip()
@@ -8786,186 +8859,176 @@ def dashboard_dynamics_of_deviations(df, hide_shared_filters=False):
             column_tooltips={str(c): str(c) for c in _pm_tbl.columns},
         )
 
-        # Show by project if project is in group
-        if "project name" in group_cols:
+        if "project name" in group_cols or (
+            "Проект" in _pm_chart_df.columns and "Период (месяц)" in _pm_chart_df.columns
+        ):
             if not hide_shared_filters:
                 render_table_subheader(st, "Динамика отклонений по проектам")
-            # If reason is also in group_cols, aggregate by period and project only (sum across reasons)
-            if "reason of deviation" in group_cols:
-                project_data = (
-                    grouped_data.groupby(["period", "project name"])
-                    .agg({"Всего дней отклонений": "sum", "Количество задач": "sum"})
-                    .reset_index()
+            _proj_y_lbl = "Количество отклонений"
+            _chart_src = _pm_chart_df[
+                (_pm_chart_df["Проект"].astype(str).str.strip() != "Итого")
+                & (_pm_chart_df["Проект"].astype(str).str.strip() != "")
+            ].copy()
+            _chart_src["_cnt"] = pd.to_numeric(
+                _chart_src["Количество отклонений"], errors="coerce"
+            ).fillna(0.0)
+            _chart_src = _chart_src.loc[_chart_src["_cnt"] > 0].copy()
+            _pd_top_periods = [
+                p
+                for p in _pm_period_order
+                if p in set(_chart_src["Период (месяц)"].astype(str).tolist())
+            ]
+            if not _pd_top_periods:
+                _pd_top_periods = sorted(
+                    _chart_src["Период (месяц)"].astype(str).unique().tolist()
                 )
-            else:
-                project_data = grouped_data
-
-            project_data = project_data.copy()
-            # Единая сетка периодов × проектов (нули там, где не было строк) — одинаковая ширина
-            # столбцов по оси X на «По проектам», сопоставимо с блоком «По причинам».
-            _pd_top_periods = (
-                list(_period_cat_labels)
-                if _period_cat_labels
-                else sorted(
-                    project_data["period"].dropna().astype(str).unique().tolist()
-                )
-            )
             _pd_top_projs = sorted(
-                project_data["project name"].dropna().astype(str).str.strip().unique().tolist()
+                _chart_src["Проект"].astype(str).str.strip().unique().tolist()
             )
-            _val_col_top = (
-                "Количество задач"
-                if "Количество задач" in project_data.columns
-                else "Всего дней отклонений"
-            )
-            _pd_top_periods = _deviations_period_labels_nonzero(
-                _pd_top_periods, project_data, value_col=_val_col_top
-            )
-            # Полная сетка сильно ужимает столбцы при длинной оси X; при >30 периодов — без декартова reindex.
-            _DYN_GRID_MAX_PERIODS = 30
-            if (
-                _pd_top_periods
-                and _pd_top_projs
-                and len(_pd_top_periods) <= _DYN_GRID_MAX_PERIODS
-            ):
-                _idx_top = pd.MultiIndex.from_product(
-                    [_pd_top_periods, _pd_top_projs],
-                    names=["period", "project name"],
-                )
-                project_data = (
-                    project_data.set_index(["period", "project name"])
-                    .reindex(_idx_top)
-                    .reset_index()
-                )
-                project_data["Всего дней отклонений"] = project_data[
-                    "Всего дней отклонений"
-                ].fillna(0.0)
-                if "Количество задач" in project_data.columns:
-                    project_data["Количество задач"] = project_data["Количество задач"].fillna(
-                        0.0
+            if _chart_src.empty or not _pd_top_periods:
+                st.info("Нет ненулевых отклонений по проектам для выбранных фильтров.")
+            else:
+                _pivot = (
+                    _chart_src.pivot_table(
+                        index="Период (месяц)",
+                        columns="Проект",
+                        values="_cnt",
+                        aggfunc="sum",
+                        fill_value=0.0,
                     )
-                try:
-                    project_data["period"] = pd.Categorical(
-                        project_data["period"],
-                        categories=_pd_top_periods,
-                        ordered=True,
+                    .reindex(index=_pd_top_periods, columns=_pd_top_projs)
+                    .fillna(0.0)
+                )
+                _n_per_top = len(_pd_top_periods)
+                _n_proj_top = len(_pd_top_projs)
+                _top_h = int(max(720, 480 + min(_n_per_top, 36) * 28))
+                _top_r = int(min(300, max(168, 120 + _n_proj_top * 22)))
+                _top_b = int(110 + min(_n_per_top, 14) * 3)
+                _leg_proj = dict(
+                    orientation="v",
+                    yanchor="top",
+                    y=1.0,
+                    xanchor="left",
+                    x=1.02,
+                    bgcolor="rgba(0,0,0,0)",
+                    borderwidth=0,
+                    tracegroupgap=4,
+                    font=dict(size=11),
+                    title=dict(text="Проект", font=dict(size=12)),
+                    itemsizing="constant",
+                )
+                fig = go.Figure()
+                _palette = px.colors.qualitative.Plotly
+                for _i, _pname in enumerate(_pd_top_projs):
+                    _ys = [float(_pivot.loc[p, _pname]) for p in _pd_top_periods]
+                    _txt = [
+                        str(int(round(v))) if v and float(v) != 0 else "" for v in _ys
+                    ]
+                    fig.add_trace(
+                        go.Bar(
+                            name=str(_pname),
+                            x=list(_pd_top_periods),
+                            y=_ys,
+                            text=_txt,
+                            textposition="inside",
+                            insidetextanchor="middle",
+                            cliponaxis=False,
+                            marker_color=_palette[_i % len(_palette)],
+                            hovertemplate=(
+                                f"<b>{html_module.escape(str(_pname))}</b>"
+                                "<br>Период: %{x}"
+                                f"<br>{html_module.escape(_proj_y_lbl)}: %{{y}}"
+                                "<extra></extra>"
+                            ),
+                        )
                     )
-                except (ValueError, TypeError):
-                    pass
-            project_data["_дни_текст"] = project_data["Всего дней отклонений"].apply(
-                lambda x: f"{int(round(x, 0))}" if pd.notna(x) and float(x) != 0 else ""
-            )
-            _proj_y_col = (
-                "Количество задач"
-                if hide_shared_filters and "Количество задач" in project_data.columns
-                else "Всего дней отклонений"
-            )
-            _proj_y_lbl = (
-                "Количество отклонений"
-                if _proj_y_col == "Количество задач"
-                else "Дни отклонений"
-            )
-            project_data["_proj_bar_txt"] = project_data[_proj_y_col].apply(
-                lambda x: f"{int(round(float(x), 0))}"
-                if pd.notna(x) and float(x) != 0
-                else ""
-            )
-            _bar_top_kw = (
-                {"category_orders": {"period": _pd_top_periods}}
-                if _pd_top_periods
-                else {}
-            )
-            fig = px.bar(
-                project_data,
-                x="period",
-                y=_proj_y_col,
-                color="project name",
-                title=None,
-                labels={
-                    "period": "Период",
-                    _proj_y_col: _proj_y_lbl,
-                    "project name": "Проект",
-                },
-                text="_proj_bar_txt",
-                **_bar_top_kw,
-            )
-            # Группировка столбцов: легенда справа — не наезжает на «Период» / подписи месяцев.
-            _n_per_top = int(len(_pd_top_periods) if _pd_top_periods else project_data["period"].nunique(dropna=True) or 0)
-            _n_proj_top = int(len(_pd_top_projs) if _pd_top_projs else 1)
-            _top_h = int(max(720, 480 + min(_n_per_top, 36) * 28))
-            _top_r = int(min(280, max(140, 100 + _n_proj_top * 18)))
-            _top_b = int(100 + min(_n_per_top, 14) * 3)
-            _leg_proj = dict(
-                orientation="v",
-                yanchor="top",
-                y=1.0,
-                xanchor="left",
-                x=1.02,
-                bgcolor="rgba(0,0,0,0)",
-                borderwidth=0,
-                tracegroupgap=4,
-                font=dict(size=11),
-                title=dict(text="Проект", font=dict(size=12)),
-            )
-            fig.update_layout(
-                barmode="group",
-                bargap=0.16,
-                bargroupgap=0.06,
-                showlegend=True,
-                legend=_leg_proj,
-                margin=dict(l=56, r=_top_r, t=36, b=_top_b),
-                xaxis=dict(
-                    title=dict(text="Период", standoff=14, font=dict(size=13, color=_ax_clr)),
-                    tickangle=-45,
-                    tickfont=dict(size=12, color=_ax_clr),
-                    automargin=False,
-                ),
-                yaxis=dict(
-                    title=dict(
-                        text=_proj_y_lbl,
-                        standoff=8,
-                        font=dict(size=13, color=_ax_clr),
+                _bgap = 0.28 if _n_per_top <= 4 else 0.18
+                fig.update_layout(
+                    barmode="stack",
+                    bargap=_bgap,
+                    showlegend=True,
+                    legend=_leg_proj,
+                    margin=dict(l=56, r=_top_r, t=36, b=_top_b),
+                    xaxis=dict(
+                        title=dict(
+                            text="Период", standoff=14, font=dict(size=13, color=_ax_clr)
+                        ),
+                        tickangle=-45,
+                        tickfont=dict(size=12, color=_ax_clr),
+                        automargin=True,
+                        categoryorder="array",
+                        categoryarray=list(_pd_top_periods),
+                        type="category",
                     ),
-                    automargin=True,
-                    tickfont=dict(size=12, color=_ax_clr),
-                ),
-                height=_top_h,
-            )
-            _sparse_top = _plotly_bargaps_sparse_x_like_gdrs(_n_per_top)
-            if _sparse_top:
-                fig.update_layout(**_sparse_top)
-            if _n_per_top > 18:
-                fig.update_xaxes(ticklabelstep=2)
-            # Один выброс по сумме дней растягивает Y — остальные столбцы сливаются с нулём.
-            _vy = pd.to_numeric(project_data[_proj_y_col], errors="coerce").dropna()
-            if len(_vy) > 0:
-                _lo, _hi = float(_vy.min()), float(_vy.max())
-                _p95 = float(_vy.quantile(0.95))
-                if _hi > 0 and _hi > max(_p95 * 2.5, abs(_lo) * 4.0, 120.0) and _p95 > 0:
-                    _cap = max(_p95 * 1.15, abs(_lo) if _lo < 0 else _p95 * 1.15)
-                    _y0 = _lo if _lo < 0 else 0.0
-                    fig.update_yaxes(range=[_y0, _cap], autorange=False)
-            fig.update_traces(
-                texttemplate="%{text}",
-                textposition="outside",
-                outsidetextfont=dict(size=14, color=_bar_lbl_clr),
-            )
-            _plotly_bar_hide_legacy_textfont(fig)
-            fig = apply_chart_background(fig, skip_uniformtext=True)
-            # apply_chart_background снова ставит легенду снизу — возвращаем справа.
-            fig.update_layout(
-                showlegend=True,
-                legend=_leg_proj,
-                margin=dict(l=56, r=_top_r, t=36, b=_top_b),
-            )
-            render_chart(
-                fig,
-                caption_below=_dynamics_caption(
-                    "Количество отклонений по периоду и проекту"
-                    if hide_shared_filters
-                    else "Дни отклонений по периоду"
-                ),
-            )
+                    yaxis=dict(
+                        title=dict(
+                            text=_proj_y_lbl,
+                            standoff=8,
+                            font=dict(size=13, color=_ax_clr),
+                        ),
+                        automargin=True,
+                        tickfont=dict(size=12, color=_ax_clr),
+                        rangemode="tozero",
+                    ),
+                    height=_top_h,
+                )
+                if _n_per_top > 18:
+                    fig.update_xaxes(ticklabelstep=2)
+                _col_tot = _pivot.sum(axis=1).reindex(_pd_top_periods).fillna(0.0)
+                _hi = float(_col_tot.max()) if len(_col_tot) else 0.0
+                if _hi <= 12:
+                    fig.update_yaxes(
+                        dtick=1,
+                        range=[0, max(_hi * 1.35, 1.0)],
+                        autorange=False,
+                    )
+                for _xl, _yv in zip(_pd_top_periods, _col_tot.tolist()):
+                    if float(_yv) > 0:
+                        fig.add_annotation(
+                            x=_xl,
+                            y=float(_yv),
+                            text=f"<b>{int(round(float(_yv), 0))}</b>",
+                            showarrow=False,
+                            xref="x",
+                            yref="y",
+                            xanchor="center",
+                            yanchor="bottom",
+                            yshift=6,
+                            font=dict(size=14, color=_bar_lbl_clr),
+                        )
+                for tr in fig.data:
+                    if getattr(tr, "type", None) != "bar":
+                        continue
+                    mc = getattr(tr.marker, "color", None)
+                    if isinstance(mc, str):
+                        tr.update(
+                            insidetextfont=dict(
+                                color=_deviations_contrast_text_on_fill(mc), size=12
+                            )
+                        )
+                _plotly_bar_hide_legacy_textfont(fig)
+                fig = apply_chart_background(fig, skip_uniformtext=True)
+                fig.update_layout(
+                    showlegend=True,
+                    legend=_leg_proj,
+                    barmode="stack",
+                    bargap=_bgap,
+                    margin=dict(l=56, r=_top_r, t=36, b=_top_b),
+                    xaxis=dict(
+                        categoryorder="array",
+                        categoryarray=list(_pd_top_periods),
+                        type="category",
+                    ),
+                )
+                render_chart(
+                    fig,
+                    caption_below=_dynamics_caption(
+                        "Количество отклонений по периоду и проекту "
+                        "(данные как в таблице выше; один столбец на месяц)"
+                        if hide_shared_filters
+                        else "Дни отклонений по периоду"
+                    ),
+                )
 
     # Summary table
     # If project is in group, show summary grouped by project overall (aggregate across all periods)
