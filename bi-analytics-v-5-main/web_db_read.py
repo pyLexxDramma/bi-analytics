@@ -236,6 +236,7 @@ def load_project_id_to_name_lookup(version_id: Optional[int] = None) -> dict[str
             pname = str(
                 row.get("Наименование_Проекта")
                 or row.get("Наименование проекта")
+                or row.get("Наименование")
                 or row.get("Проект")
                 or ""
             ).strip()

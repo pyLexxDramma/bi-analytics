@@ -3,16 +3,240 @@
 
 Использует MSP_PROJECT_NAME_MAP и правила из dev_projects_tz_matrix
 («Дмитровский-1», «Есипово-5» из 1с_*_Projekts.json вместо лат. slug / римских V).
+
+Для новых msp_<latin_slug>_*.csv без ручной карты: транслит slug → сопоставление
+с наименованиями из 1с_*_Projekts.json (zhukovsky1 → Жуковский).
 """
 from __future__ import annotations
 
 import re
 from collections import defaultdict
-from typing import List, Optional, Set
+from typing import List, Optional, Set, Tuple
 
 import pandas as pd
 
 from config import MSP_PROJECT_FILTER_EXCLUDE_NAMES
+
+# Многосимвольные замены латиницы (GOST-подобно для slug MSP) — до посимвольных.
+_LATIN_MULTI = (
+    ("shch", "щ"),
+    ("sch", "щ"),
+    ("skiy", "ский"),
+    ("skij", "ский"),
+    ("sky", "ский"),  # zhukovsky → жуковский (не «жуковски»)
+    ("cki", "цки"),
+    ("yo", "ё"),
+    ("zh", "ж"),
+    ("kh", "х"),
+    ("ts", "ц"),
+    ("ch", "ч"),
+    ("sh", "ш"),
+    ("yu", "ю"),
+    ("ya", "я"),
+    ("ye", "е"),
+    ("iy", "ий"),
+    ("yy", "ый"),
+)
+_LATIN_ONE = {
+    "a": "а",
+    "b": "б",
+    "c": "к",
+    "d": "д",
+    "e": "е",
+    "f": "ф",
+    "g": "г",
+    "h": "х",
+    "i": "и",
+    "j": "й",
+    "k": "к",
+    "l": "л",
+    "m": "м",
+    "n": "н",
+    "o": "о",
+    "p": "п",
+    "q": "к",
+    "r": "р",
+    "s": "с",
+    "t": "т",
+    "u": "у",
+    "v": "в",
+    "w": "в",
+    "x": "кс",
+    "y": "и",
+    "z": "з",
+}
+
+
+def project_name_is_latin_slug(raw: object) -> bool:
+    """True, если имя похоже на латинский slug файла MSP (Zhukovsky1), а не на русское."""
+    s = _clean_raw_name(raw)
+    if not s:
+        return False
+    if re.search(r"[а-яё]", s, flags=re.IGNORECASE):
+        return False
+    return bool(re.search(r"[a-z]", s, flags=re.IGNORECASE))
+
+
+def latin_msp_slug_to_cyrillic(raw: object) -> str:
+    """zhukovsky1 / Novorizhskiy → жуковский1 / новорижский (грубый транслит для матча)."""
+    s = _clean_raw_name(raw).lower().replace(" ", "").replace("-", "").replace("_", "")
+    if not s:
+        return ""
+    out: list[str] = []
+    i = 0
+    while i < len(s):
+        if s[i].isdigit():
+            out.append(s[i])
+            i += 1
+            continue
+        hit = False
+        for lat, cyr in _LATIN_MULTI:
+            if s.startswith(lat, i):
+                out.append(cyr)
+                i += len(lat)
+                hit = True
+                break
+        if hit:
+            continue
+        ch = s[i]
+        out.append(_LATIN_ONE.get(ch, ch))
+        i += 1
+    return "".join(out)
+
+
+def _projekts_russian_names() -> List[str]:
+    """Все русские наименования проектов из БД / web/*_Projekts.json."""
+    names: list[str] = []
+    seen: set[str] = set()
+
+    def _add(raw: object) -> None:
+        t = _clean_raw_name(raw)
+        if not t or t.lower() in seen:
+            return
+        if not re.search(r"[а-яё]", t, flags=re.IGNORECASE):
+            return
+        seen.add(t.lower())
+        names.append(t)
+
+    try:
+        from web_db_read import load_project_id_to_name_lookup
+
+        for v in load_project_id_to_name_lookup().values():
+            _add(v)
+    except Exception:
+        pass
+    # Всегда дополняем из web/*_Projekts.json и карты: в БД справочник
+    # может быть неполным / без поля «Наименование».
+    try:
+        import json
+        from pathlib import Path
+
+        roots = [
+            Path("web"),
+            Path(__file__).resolve().parent.parent / "web",
+        ]
+        paths: list[Path] = []
+        for root in roots:
+            if not root.is_dir():
+                continue
+            paths.extend(root.glob("*_Projekts.json"))
+            paths.extend(root.glob("*Projekts.json"))
+        for p in sorted(set(paths))[-6:]:
+            try:
+                with open(p, encoding="utf-8") as f:
+                    rows = json.load(f)
+            except Exception:
+                continue
+            if not isinstance(rows, list):
+                continue
+            for row in rows:
+                if not isinstance(row, dict):
+                    continue
+                _add(
+                    row.get("Наименование_Проекта")
+                    or row.get("Наименование проекта")
+                    or row.get("Наименование")
+                    or row.get("Проект")
+                )
+    except Exception:
+        pass
+    try:
+        from config import MSP_PROJECT_NAME_MAP as M
+
+        for v in M.values():
+            _add(v)
+    except Exception:
+        pass
+    return names
+
+
+def _norm_compact(s: str) -> str:
+    t = (
+        str(s or "")
+        .strip()
+        .lower()
+        .replace("ё", "е")
+        .replace(" ", "")
+        .replace("-", "")
+        .replace("_", "")
+        .replace(".", "")
+    )
+    return t
+
+
+def match_latin_slug_to_russian_project(raw: object) -> Optional[str]:
+    """
+    Авто: латинский slug MSP → русское имя из 1С Projekts.
+
+    zhukovsky1 → Жуковский; esipovo5 → Есипово-5.
+    Предпочитает короткое точное совпадение базы имени, не «ИС Жуковский ЦПК 1».
+    """
+    if not project_name_is_latin_slug(raw):
+        return None
+    cyr = latin_msp_slug_to_cyrillic(raw)
+    if not cyr:
+        return None
+    cyr_base = re.sub(r"\d+$", "", cyr)
+    digit_tail = ""
+    m_dig = re.search(r"(\d+)$", cyr)
+    if m_dig:
+        digit_tail = m_dig.group(1)
+
+    candidates = _projekts_russian_names()
+    if not candidates:
+        return None
+
+    scored: list[Tuple[tuple, str]] = []
+    for name in candidates:
+        nk = _norm_compact(name)
+        if not nk:
+            continue
+        # Убрать служебные префиксы для сравнения базы
+        nk_core = re.sub(r"^(ис|мсп|проект)", "", nk)
+        score: Optional[tuple] = None
+        if digit_tail and (
+            nk == cyr
+            or nk == cyr_base + digit_tail
+            or nk_core == cyr
+            or nk_core == cyr_base + digit_tail
+        ):
+            # Есипово-5 ↔ esipovo5
+            score = (0, len(name), name)
+        elif cyr_base and (nk == cyr_base or nk_core == cyr_base):
+            # Жуковский ↔ zhukovsky1
+            score = (1, len(name), name)
+        elif cyr_base and len(cyr_base) >= 4 and (
+            nk.startswith(cyr_base) or cyr_base in nk or nk_core.startswith(cyr_base)
+        ):
+            # длинные «ИС Жуковский…» — запасной вариант
+            score = (2, len(name), name)
+        if score is not None:
+            scored.append((score, name))
+
+    if not scored:
+        return None
+    scored.sort(key=lambda x: (x[0][0], x[0][1]))
+    return scored[0][1]
 
 _ROMAN_PROJECT_TAIL = {
     "I": 1,

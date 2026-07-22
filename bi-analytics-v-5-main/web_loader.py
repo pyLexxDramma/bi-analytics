@@ -369,9 +369,25 @@ def _apply_msp_column_mapping(df: pd.DataFrame, project_name: str) -> pd.DataFra
     from config import MSP_PROJECT_NAME_MAP
 
     # Нормализованное имя проекта из имени файла (msp_<project_name>_<date>.csv).
-    # Используется и как заполнитель пустых ячеек, и как fallback для непокрытых ключей.
-    _file_key = (project_name or "").strip().lower()
-    ru_from_file = MSP_PROJECT_NAME_MAP.get(_file_key, project_name or "")
+    # Карта → автомат по 1С Projekts (транслит slug) → исходный slug.
+    _file_key = (project_name or "").strip().lower().replace(" ", "")
+    _file_key_base = re.sub(r"\d+$", "", _file_key)
+    ru_from_file = (
+        MSP_PROJECT_NAME_MAP.get(_file_key)
+        or MSP_PROJECT_NAME_MAP.get(_file_key_base)
+        or ""
+    )
+    if not ru_from_file:
+        try:
+            from dashboards.project_labels import match_latin_slug_to_russian_project
+
+            ru_from_file = str(
+                match_latin_slug_to_russian_project(project_name or _file_key) or ""
+            ).strip()
+        except Exception:
+            ru_from_file = ""
+    if not ru_from_file:
+        ru_from_file = project_name or ""
 
     def _normalize_project_cell(x):
         if pd.isna(x):
@@ -379,8 +395,24 @@ def _apply_msp_column_mapping(df: pd.DataFrame, project_name: str) -> pd.DataFra
         s = str(x).strip()
         if not s or s.lower() in ("nan", "none", "<na>"):
             return ru_from_file
-        # Пробуем маппинг (с учётом регистра и варианта lower).
-        return MSP_PROJECT_NAME_MAP.get(s, MSP_PROJECT_NAME_MAP.get(s.lower(), ru_from_file or s))
+        lk = s.lower().replace(" ", "")
+        lk_base = re.sub(r"\d+$", "", lk)
+        hit = (
+            MSP_PROJECT_NAME_MAP.get(s)
+            or MSP_PROJECT_NAME_MAP.get(lk)
+            or MSP_PROJECT_NAME_MAP.get(lk_base)
+        )
+        if hit:
+            return hit
+        try:
+            from dashboards.project_labels import match_latin_slug_to_russian_project
+
+            auto = match_latin_slug_to_russian_project(s)
+            if auto:
+                return str(auto).strip()
+        except Exception:
+            pass
+        return ru_from_file or s
 
     if "project name" not in df.columns:
         df["project name"] = ru_from_file

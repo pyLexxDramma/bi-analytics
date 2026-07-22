@@ -973,8 +973,13 @@ def _control_points_project_group_key(raw: Any) -> str:
         if len(s_alt) >= 3:
             s = s_alt
     lk = s.lower().replace(" ", "")
-    if lk in M:
-        nk = _norm_dev_project_key(M[lk])
+    mapped = None
+    for k in (lk, re.sub(r"\d+$", "", lk), _norm_dev_project_key(s)):
+        if k and k in M:
+            mapped = M[k]
+            break
+    if mapped:
+        nk = _norm_dev_project_key(mapped)
     else:
         nk = _norm_dev_project_key(s)
     # После маппинга: «Дмитровский», «Дмитровский 1», «Дмитровский I» — один проект.
@@ -1035,6 +1040,7 @@ def _projekts_display_by_norm_key() -> Dict[str, str]:
                     s = str(
                         row.get("Наименование_Проекта")
                         or row.get("Наименование проекта")
+                        or row.get("Наименование")
                         or row.get("Проект")
                         or ""
                     ).strip()
@@ -1048,6 +1054,69 @@ def _projekts_display_by_norm_key() -> Dict[str, str]:
             _PROJEKTS_DISPLAY_BY_NK_CACHE.clear()
         _PROJEKTS_DISPLAY_BY_NK_CACHE[_key] = by_nk
     return by_nk
+
+
+def _msp_map_lookup_keys(raw: Any) -> List[str]:
+    """Ключи для MSP_PROJECT_NAME_MAP: as-is, без пробелов, без хвостовой цифры (zhukovsky1→zhukovsky)."""
+    s = str(raw or "").strip()
+    if not s:
+        return []
+    keys: List[str] = []
+    for cand in (
+        s.lower().replace(" ", "").replace("\xa0", ""),
+        _norm_dev_project_key(s),
+        re.sub(r"\d+$", "", s.lower().replace(" ", "").replace("\xa0", "")),
+        re.sub(r"\d+$", "", _norm_dev_project_key(s)),
+    ):
+        c = str(cand or "").strip()
+        if c and c not in keys:
+            keys.append(c)
+    return keys
+
+
+def resolve_msp_project_display_name(raw: Any) -> str:
+    """
+    Единая русская подпись проекта для матрицы/фильтров.
+
+    1) MSP_PROJECT_NAME_MAP; 2) 1С Projekts по norm-key;
+    3) авто: латинский slug (Zhukovsky1) → транслит → матч с Projekts.
+    """
+    s = str(raw or "").strip()
+    if not s:
+        return ""
+    try:
+        from config import MSP_PROJECT_NAME_MAP as M
+    except Exception:
+        M = {}
+    for k in _msp_map_lookup_keys(s):
+        if k in M:
+            return str(M[k]).strip()
+    # 1С Projekts: «Жуковский» по norm-key (в т.ч. после map slug→рус.)
+    try:
+        proj_ref = _projekts_display_by_norm_key()
+        for k in _msp_map_lookup_keys(s):
+            if k in proj_ref:
+                return str(proj_ref[k]).strip()
+            mapped = M.get(k) if isinstance(M, dict) else None
+            if mapped:
+                nk = _norm_dev_project_key(mapped)
+                if nk and nk in proj_ref:
+                    return str(proj_ref[nk]).strip()
+        nk0 = _norm_dev_project_key(s)
+        if nk0 and nk0 in proj_ref:
+            return str(proj_ref[nk0]).strip()
+    except Exception:
+        pass
+    # Авто для новых msp_<latin>_*.csv без ручной записи в карту
+    try:
+        from dashboards.project_labels import match_latin_slug_to_russian_project
+
+        auto = match_latin_slug_to_russian_project(s)
+        if auto:
+            return str(auto).strip()
+    except Exception:
+        pass
+    return s
 
 
 def _control_points_project_label(group_key: str, raw_names: List[str]) -> str:
@@ -1067,6 +1136,13 @@ def _control_points_project_label(group_key: str, raw_names: List[str]) -> str:
     gk_nk = _norm_dev_project_key(group_key)
     if gk_nk and gk_nk in proj_ref:
         return proj_ref[gk_nk]
+    # Карта slug→рус. (zhukovsky1 / Zhukovsky1 → Жуковский), как у Новорижского.
+    for r in list(raw_names) + [group_key]:
+        disp = resolve_msp_project_display_name(r)
+        if disp and disp != str(r or "").strip():
+            return disp
+        if disp and re.search(r"[а-яё]", disp, flags=re.IGNORECASE):
+            return disp
     try:
         from config import MSP_PROJECT_NAME_MAP as M
     except Exception:
@@ -1074,18 +1150,16 @@ def _control_points_project_label(group_key: str, raw_names: List[str]) -> str:
     # Сначала точный ключ из карты (без нормализации римских), чтобы не потерять имена вида
     # «Дмитровский-1». Далее — по нормализованному ключу (римские хвосты тоже сводятся).
     for r in raw_names:
-        lk = str(r).strip().lower().replace(" ", "")
-        if lk in M:
-            return str(M[lk]).strip()
-    for r in raw_names:
-        nk = _norm_dev_project_key(r)
-        if nk and nk in M:
-            return str(M[nk]).strip()
+        for lk in _msp_map_lookup_keys(r):
+            if lk in M:
+                return str(M[lk]).strip()
     for r in raw_names:
         s = str(r).strip()
         if s and re.search(r"[а-яё]", s, flags=re.IGNORECASE):
             return s
-    return str(raw_names[0]).strip() if raw_names else ""
+    if raw_names:
+        return resolve_msp_project_display_name(raw_names[0]) or str(raw_names[0]).strip()
+    return resolve_msp_project_display_name(group_key) or str(group_key or "").strip()
 
 
 def _bddds_df_for_dev_matrix(
@@ -2157,10 +2231,14 @@ def build_dev_tz_matrix_rows(
     plab = str(project_label_for_scope or "").strip()
     if plab and "project name" in mdf.columns:
         try:
-            pk_tgt = _norm_dev_project_key(plab)
+            # Жуковский (подпись) и Zhukovsky1 (slug файла) — один group key после карты.
+            pk_tgt = str(_control_points_project_group_key(plab) or "").strip()
             if pk_tgt:
                 m_scoped = mdf[
-                    mdf["project name"].map(lambda x, pk=pk_tgt: _norm_dev_project_key(x) == pk)
+                    mdf["project name"].map(
+                        lambda x, pk=pk_tgt: str(_control_points_project_group_key(x) or "").strip()
+                        == pk
+                    )
                 ]
                 if m_scoped is not None and not getattr(m_scoped, "empty", True):
                     mdf = m_scoped
@@ -2177,6 +2255,15 @@ def build_dev_tz_matrix_rows(
             pass
     if mdf is not None and not getattr(mdf, "empty", True):
         mdf = dedupe_msp_for_developer_projects(mdf)
+    # Подпись в колонке «Проект»: всегда русская карта (не slug из msp_zhukovsky1_*).
+    if mdf is not None and not getattr(mdf, "empty", True) and "project name" in mdf.columns:
+        try:
+            mdf = mdf.copy()
+            mdf["project name"] = mdf["project name"].map(
+                lambda x: resolve_msp_project_display_name(x) or str(x or "").strip()
+            )
+        except Exception:
+            pass
 
     _prefs = load_developer_projects_matrix_prefs()
 
@@ -2244,7 +2331,8 @@ def build_dev_tz_matrix_rows(
     if "project name" in mdf.columns and mdf["project name"].notna().any():
         cap = str(mdf["project name"].dropna().astype(str).iloc[0]).strip()
     # Подпись блока (фильтр «Все» → по проектам): для TESSA/1С не брать случайный iloc[0].
-    scope_label = (plab or cap).strip()
+    # Всегда через карту: иначе cap остаётся Zhukovsky1 при пустом plab.
+    scope_label = resolve_msp_project_display_name(plab or cap) or (plab or cap).strip()
 
     def _msp_row(
         phase: str,
@@ -6377,7 +6465,7 @@ def render_control_points_dashboard(st, mdf: pd.DataFrame, table_css: str) -> No
 
 _DEV_MATRIX_CACHE_KEY = "_dev_matrix_cache_v1"
 # Инкремент при изменении логики `dedupe_msp_for_developer_projects` (сброс session-кэша dedupe).
-_DEV_DEDUPE_CACHE_VER = 6
+_DEV_DEDUPE_CACHE_VER = 7
 
 
 def _matrix_project_scope_tag(df: pd.DataFrame) -> str:
