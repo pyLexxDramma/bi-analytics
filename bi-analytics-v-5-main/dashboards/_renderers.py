@@ -2845,10 +2845,41 @@ def _deviations_stacked_bar_add_totals(
         )
 
 
+def _deviations_stacked_bar_ensure_label_space(
+    fig,
+    frame: pd.DataFrame,
+    *,
+    period_col: str,
+    value_col: str,
+) -> None:
+    """Запас по Y под итог над столбцом (после apply_chart_background)."""
+    if frame is None or frame.empty or period_col not in frame.columns or value_col not in frame.columns:
+        return
+    try:
+        _hi = float(
+            pd.to_numeric(frame[value_col], errors="coerce")
+            .fillna(0.0)
+            .groupby(frame[period_col], observed=False)
+            .sum()
+            .max()
+        )
+    except Exception:
+        return
+    if _hi <= 0:
+        return
+    _y_top = max(_hi * 1.45, _hi + 0.85, 1.0)
+    fig.update_yaxes(
+        range=[0, _y_top],
+        autorange=False,
+        rangemode="tozero",
+        dtick=1 if _hi <= 12 else None,
+    )
+
+
 def _deviations_dynamics_stacked_bar_finalize(fig, layout_kw: dict) -> None:
     """После apply_chart_background — вернуть высоту, отступы и легенду справа."""
     _leg = dict(layout_kw.get("legend") or {})
-    fig.update_layout(
+    _upd = dict(
         height=layout_kw["height"],
         margin=layout_kw["margin"],
         showlegend=True,
@@ -2856,6 +2887,13 @@ def _deviations_dynamics_stacked_bar_finalize(fig, layout_kw: dict) -> None:
         xaxis=layout_kw.get("xaxis"),
         yaxis=layout_kw.get("yaxis"),
     )
+    if "bargap" in layout_kw:
+        _upd["bargap"] = layout_kw["bargap"]
+    if "bargroupgap" in layout_kw:
+        _upd["bargroupgap"] = layout_kw["bargroupgap"]
+    if "barmode" in layout_kw:
+        _upd["barmode"] = layout_kw["barmode"]
+    fig.update_layout(**_upd)
     # Повторно — apply_chart_background мог снова поставить горизонтальную легенду снизу.
     if _leg:
         fig.update_layout(showlegend=True, legend=_leg, margin=layout_kw["margin"])
@@ -2881,9 +2919,10 @@ def _deviations_dynamics_stacked_bar_layout(
     height = plot_h + t_margin + b_margin
     # Ширина правой колонки под легенду (длинные названия причин).
     r_margin = int(min(320, max(168, 110 + n_leg * 8)))
+    # Столбцы уже в ~4 раза: доля бара 0.66 (bargap=0.34) → 0.165 (bargap=0.835).
     return dict(
         barmode="stack",
-        bargap=0.34,
+        bargap=0.835,
         bargroupgap=0.06,
         showlegend=True,
         legend=dict(
@@ -8392,7 +8431,28 @@ def dashboard_dynamics_of_deviations(df, hide_shared_filters=False):
                         "Количество задач"
                     ].fillna(0.0)
 
-            reason_data["_seg_lbl"] = reason_data["Количество задач"].map(_seg_cnt_lbl)
+            # Подпись в сегменте только если в столбце ≥2 ненулевых сегмента;
+            # иначе дублируется с итогом над столбцом (типично один столбец «1»).
+            _nz_per_period = (
+                pd.to_numeric(reason_data["Количество задач"], errors="coerce")
+                .fillna(0.0)
+                .gt(0)
+                .groupby(reason_data["period"], observed=False)
+                .sum()
+            )
+
+            def _seg_lbl_row(row) -> str:
+                base = _seg_cnt_lbl(row.get("Количество задач"))
+                if not base:
+                    return ""
+                try:
+                    if int(_nz_per_period.get(row.get("period"), 0)) <= 1:
+                        return ""
+                except Exception:
+                    pass
+                return base
+
+            reason_data["_seg_lbl"] = reason_data.apply(_seg_lbl_row, axis=1)
             try:
                 reason_data["period"] = pd.Categorical(
                     reason_data["period"],
@@ -8495,9 +8555,6 @@ def dashboard_dynamics_of_deviations(df, hide_shared_filters=False):
                         multi_proj=True,
                         n_legend_items=_leg_n or len(_reason_order_p) or 1,
                     )
-                    _g_f = _plotly_bargaps_sparse_x_like_gdrs(_n_per_p)
-                    if _g_f:
-                        _panel_ly.update(_g_f)
                     fig.update_layout(**_panel_ly)
                     if _periods_p:
                         fig.update_xaxes(
@@ -8506,12 +8563,6 @@ def dashboard_dynamics_of_deviations(df, hide_shared_filters=False):
                         )
                     if _n_per_p > 18:
                         fig.update_xaxes(ticklabelstep=2)
-                    _deviations_stacked_bar_add_totals(
-                        fig,
-                        _rd_p,
-                        period_col="period",
-                        value_col="Количество задач",
-                    )
                     fig.update_traces(
                         texttemplate="%{text}",
                         textposition="inside",
@@ -8535,6 +8586,18 @@ def dashboard_dynamics_of_deviations(df, hide_shared_filters=False):
                     fig = _plotly_bar_hide_legacy_textfont(fig)
                     fig = apply_chart_background(fig, skip_uniformtext=True)
                     _deviations_dynamics_stacked_bar_finalize(fig, _panel_ly)
+                    _deviations_stacked_bar_ensure_label_space(
+                        fig,
+                        _rd_p,
+                        period_col="period",
+                        value_col="Количество задач",
+                    )
+                    _deviations_stacked_bar_add_totals(
+                        fig,
+                        _rd_p,
+                        period_col="period",
+                        value_col="Количество задач",
+                    )
                     # apply_chart_background обнуляет title.text — заголовок после finalize,
                     # без затирания margin.b (см. _deviations_plotly_project_chart_title).
                     _deviations_plotly_project_chart_title(fig, _pname)
@@ -8579,9 +8642,6 @@ def dashboard_dynamics_of_deviations(df, hide_shared_filters=False):
                     multi_proj=False,
                     n_legend_items=_leg_n_s or len(_reason_order),
                 )
-                _g_s = _plotly_bargaps_sparse_x_like_gdrs(_n_per_single)
-                if _g_s:
-                    _single_ly.update(_g_s)
                 fig.update_layout(**_single_ly)
                 if _n_per_single > 18:
                     fig.update_xaxes(ticklabelstep=2)
@@ -8633,17 +8693,23 @@ def dashboard_dynamics_of_deviations(df, hide_shared_filters=False):
                         tr.update(insidetextfont=dict(color=tc, size=10))
                     tr.update(hovertemplate=_hover_tpl_single)
 
+                _deviations_dynamics_hide_zero_legend_traces(fig)
+
+                fig = _plotly_bar_hide_legacy_textfont(fig)
+                fig = apply_chart_background(fig, skip_uniformtext=True)
+                _deviations_dynamics_stacked_bar_finalize(fig, _single_ly)
+                _deviations_stacked_bar_ensure_label_space(
+                    fig,
+                    reason_data,
+                    period_col="period",
+                    value_col="Количество задач",
+                )
                 _deviations_stacked_bar_add_totals(
                     fig,
                     reason_data,
                     period_col="period",
                     value_col="Количество задач",
                 )
-                _deviations_dynamics_hide_zero_legend_traces(fig)
-
-                fig = _plotly_bar_hide_legacy_textfont(fig)
-                fig = apply_chart_background(fig, skip_uniformtext=True)
-                _deviations_dynamics_stacked_bar_finalize(fig, _single_ly)
                 # apply_chart_background обнуляет title.text — заголовок после finalize.
                 if _single_proj_name:
                     _deviations_plotly_project_chart_title(fig, _single_proj_name)
@@ -8917,13 +8983,22 @@ def dashboard_dynamics_of_deviations(df, hide_shared_filters=False):
                     title=dict(text="Проект", font=dict(size=12)),
                     itemsizing="constant",
                 )
+                _col_tot = _pivot.sum(axis=1).reindex(_pd_top_periods).fillna(0.0)
+                # Число ненулевых сегментов в столбце: при 1 — только итог сверху
+                # (иначе дубль «1» внутри и «1» над столбцом).
+                _nz_seg = (_pivot > 0).sum(axis=1).reindex(_pd_top_periods).fillna(0)
                 fig = go.Figure()
                 _palette = px.colors.qualitative.Plotly
                 for _i, _pname in enumerate(_pd_top_projs):
                     _ys = [float(_pivot.loc[p, _pname]) for p in _pd_top_periods]
-                    _txt = [
-                        str(int(round(v))) if v and float(v) != 0 else "" for v in _ys
-                    ]
+                    _txt = []
+                    for _p, _v in zip(_pd_top_periods, _ys):
+                        if not _v or float(_v) == 0:
+                            _txt.append("")
+                        elif int(_nz_seg.get(_p, 0)) <= 1:
+                            _txt.append("")  # подпись = итог над столбцом
+                        else:
+                            _txt.append(str(int(round(float(_v)))))
                     fig.add_trace(
                         go.Bar(
                             name=str(_pname),
@@ -8942,13 +9017,17 @@ def dashboard_dynamics_of_deviations(df, hide_shared_filters=False):
                             ),
                         )
                     )
-                _bgap = 0.28 if _n_per_top <= 4 else 0.18
+                # Столбцы уже в ~2 раза: доля бара 0.72/0.82 → 0.36/0.41.
+                _bgap = 0.64 if _n_per_top <= 4 else 0.59
+                _hi = float(_col_tot.max()) if len(_col_tot) else 0.0
+                _y_top = max(_hi * 1.45, _hi + 0.85, 1.0) if _hi > 0 else 1.0
+                _top_m = 56  # запас под итог над столбцом
                 fig.update_layout(
                     barmode="stack",
                     bargap=_bgap,
                     showlegend=True,
                     legend=_leg_proj,
-                    margin=dict(l=56, r=_top_r, t=36, b=_top_b),
+                    margin=dict(l=56, r=_top_r, t=_top_m, b=_top_b),
                     xaxis=dict(
                         title=dict(
                             text="Период", standoff=14, font=dict(size=13, color=_ax_clr)
@@ -8969,33 +9048,14 @@ def dashboard_dynamics_of_deviations(df, hide_shared_filters=False):
                         automargin=True,
                         tickfont=dict(size=12, color=_ax_clr),
                         rangemode="tozero",
+                        range=[0, _y_top],
+                        autorange=False,
+                        dtick=1 if _hi <= 12 else None,
                     ),
                     height=_top_h,
                 )
                 if _n_per_top > 18:
                     fig.update_xaxes(ticklabelstep=2)
-                _col_tot = _pivot.sum(axis=1).reindex(_pd_top_periods).fillna(0.0)
-                _hi = float(_col_tot.max()) if len(_col_tot) else 0.0
-                if _hi <= 12:
-                    fig.update_yaxes(
-                        dtick=1,
-                        range=[0, max(_hi * 1.35, 1.0)],
-                        autorange=False,
-                    )
-                for _xl, _yv in zip(_pd_top_periods, _col_tot.tolist()):
-                    if float(_yv) > 0:
-                        fig.add_annotation(
-                            x=_xl,
-                            y=float(_yv),
-                            text=f"<b>{int(round(float(_yv), 0))}</b>",
-                            showarrow=False,
-                            xref="x",
-                            yref="y",
-                            xanchor="center",
-                            yanchor="bottom",
-                            yshift=6,
-                            font=dict(size=14, color=_bar_lbl_clr),
-                        )
                 for tr in fig.data:
                     if getattr(tr, "type", None) != "bar":
                         continue
@@ -9008,18 +9068,40 @@ def dashboard_dynamics_of_deviations(df, hide_shared_filters=False):
                         )
                 _plotly_bar_hide_legacy_textfont(fig)
                 fig = apply_chart_background(fig, skip_uniformtext=True)
+                # apply_chart_background трогает yaxis/margin — возвращаем запас под подписи.
                 fig.update_layout(
                     showlegend=True,
                     legend=_leg_proj,
                     barmode="stack",
                     bargap=_bgap,
-                    margin=dict(l=56, r=_top_r, t=36, b=_top_b),
+                    margin=dict(l=56, r=_top_r, t=_top_m, b=_top_b),
                     xaxis=dict(
                         categoryorder="array",
                         categoryarray=list(_pd_top_periods),
                         type="category",
                     ),
                 )
+                fig.update_yaxes(
+                    range=[0, _y_top],
+                    autorange=False,
+                    dtick=1 if _hi <= 12 else None,
+                    rangemode="tozero",
+                )
+                # Итоги над столбцами — после apply_chart_background.
+                for _xl, _yv in zip(_pd_top_periods, _col_tot.tolist()):
+                    if float(_yv) > 0:
+                        fig.add_annotation(
+                            x=_xl,
+                            y=float(_yv),
+                            text=f"<b>{int(round(float(_yv), 0))}</b>",
+                            showarrow=False,
+                            xref="x",
+                            yref="y",
+                            xanchor="center",
+                            yanchor="bottom",
+                            yshift=8,
+                            font=dict(size=15, color=_bar_lbl_clr),
+                        )
                 render_chart(
                     fig,
                     caption_below=_dynamics_caption(
