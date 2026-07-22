@@ -4941,6 +4941,21 @@ def _bar_scalar_is_negative(v) -> bool:
         return False
 
 
+def _bar_scalar_is_zero(v) -> bool:
+    if v is None:
+        return True
+    if isinstance(v, (int, float)) and not isinstance(v, bool):
+        if isinstance(v, float) and (np.isnan(v) or np.isinf(v)):
+            return True
+        return float(v) == 0.0
+    if hasattr(v, "toordinal") or hasattr(v, "to_pydatetime"):
+        return False
+    try:
+        return float(v) == 0.0
+    except (TypeError, ValueError):
+        return False
+
+
 def _format_plotly_bar_scalar(v) -> str:
     if v is None:
         return ""
@@ -5132,6 +5147,10 @@ def _apply_plotly_spec_411_labels(fig: go.Figure) -> go.Figure:
                 out = []
                 tpos = []
                 for v in values:
+                    if _bar_scalar_is_zero(v):
+                        out.append("")
+                        tpos.append("none")
+                        continue
                     out.append(_format_plotly_bar_scalar(v))
                     if _bar_scalar_is_negative(v):
                         tpos.append("auto")
@@ -18413,6 +18432,8 @@ def _rd_detail_prepare_for_display(
         out["Наименование разделов работ"] = out["Наименование разделов работ"].map(
             _rd_plan_unglue_section_name
         )
+    if "ID документа в Тессе" in out.columns:
+        out["ID документа в Тессе"] = out["ID документа в Тессе"].map(_exec_int_str)
     out = out.rename(columns=_RD_DETAIL_DISPLAY_RENAME)
     _cols = [c for c in _RD_DETAIL_DISPLAY_ORDER if c in out.columns]
     return out[_cols]
@@ -18568,7 +18589,9 @@ def _build_rd_work_doc_detail_table(
                         tr.get("Дата выдачи в производство работ", "") or ""
                     ),
                     "Подрядчик": str(tr.get("Подрядчик", "") or ""),
-                    "ID документа в Тессе": str(tr.get("ID документа в Тессе", "") or ""),
+                    "ID документа в Тессе": _exec_int_str(
+                        tr.get("ID документа в Тессе", "")
+                    ),
                 }
             )
         else:
@@ -43425,8 +43448,10 @@ def _pred_objects_by_status_figure(
                 name=status,
                 marker=dict(color=_pred_status_chart_color(status)),
                 text=texts,
+                texttemplate="%{text}",
                 textposition="inside",
                 insidetextanchor="middle",
+                textangle=0,
                 textfont=dict(color="#ffffff", size=13, family="Inter, Arial, sans-serif"),
                 hovertemplate=f"<b>%{{x}}</b><br>{status}: %{{y}}<extra></extra>",
             )
@@ -43465,20 +43490,24 @@ def _pred_objects_by_status_figure(
             x=0.5,
             font=dict(size=12, color=_fin_chart_label_color()),
         ),
-        uirevision=f"pred_by_obj_v2_{int(hide_resolved)}",
+        uirevision=f"pred_by_obj_v3_{int(hide_resolved)}",
         xaxis=dict(
-            fixedrange=True,
+            fixedrange=False,
             categoryorder="array",
             categoryarray=obj_labels,
             tickangle=0,
             tickfont=dict(size=16, color=_fin_chart_label_color()),
         ),
-        yaxis=dict(fixedrange=True, range=[0, axis_upper * 1.12]),
+        yaxis=dict(fixedrange=False, range=[0, axis_upper * 1.12]),
         margin=dict(l=56, r=36, t=64, b=110),
         **_obj_gaps,
     )
-    fig.update_traces(width=max(0.08, 0.46 / 5), selector=dict(type="bar"))
-    fig.update_layout(uniformtext=dict(minsize=9, mode="hide"))
+    fig.update_traces(
+        width=max(0.08, 0.46 / 5),
+        selector=dict(type="bar"),
+        textangle=0,
+    )
+    fig.update_layout(uniformtext=dict(minsize=9, mode="show"))
     fig = _apply_finance_bar_label_layout(fig)
     return fig
 
@@ -43506,23 +43535,36 @@ def _pred_fmt_due(val) -> str:
 def _pred_fmt_num(val) -> str:
     if val is None or (isinstance(val, float) and pd.isna(val)) or str(val).strip() == "":
         return "Без номера"
-    try:
-        nf = float(val)
-        return str(int(nf)) if nf == int(nf) else str(nf).strip()
-    except (TypeError, ValueError):
-        return str(val).strip()
+    formatted = _pred_fmt_doc_full(val)
+    if formatted == "—":
+        return "Без номера"
+    return formatted
 
 
 def _pred_fmt_doc_full(val) -> str:
-    """Полный номер документа из файла без «73.0» для целых чисел."""
+    """ID/номер документа из TESSA — целое без плавающей точки (73.0 → «73»)."""
     if val is None or (isinstance(val, float) and pd.isna(val)):
         return "—"
-    s = str(val).strip()
-    if not s or s.lower() in ("nan", "none", "nat"):
-        return "—"
+    # numpy/pandas целые и float-целые
     try:
-        nf = float(s.replace(",", "."))
-        if nf == int(nf):
+        if isinstance(val, (int, np.integer)) and not isinstance(val, bool):
+            return str(int(val))
+        if isinstance(val, (float, np.floating)) and float(val) == int(val):
+            return str(int(val))
+    except (TypeError, ValueError, OverflowError):
+        pass
+    s = str(val).strip()
+    if not s or s.lower() in ("nan", "none", "nat", "<na>"):
+        return "—"
+    # «318.0» / «318,0» из CSV/Excel
+    if re.fullmatch(r"-?\d+[.,]0+", s.replace(" ", "").replace("\xa0", "")):
+        try:
+            return str(int(float(s.replace(" ", "").replace("\xa0", "").replace(",", "."))))
+        except (TypeError, ValueError):
+            pass
+    try:
+        nf = float(s.replace(" ", "").replace("\xa0", "").replace(",", "."))
+        if nf == int(nf) and abs(nf) < 1e15:
             return str(int(nf))
     except (TypeError, ValueError):
         pass
@@ -46686,7 +46728,9 @@ def _build_tessa_rd_detail_table(
                 "Дата загрузки раздела генпроектировщиком": designer_upload_str,
                 "Дата выдачи в производство работ": production_str,
                 "Подрядчик": _safe(contractor_col, r) if contractor_col else "",
-                "ID документа в Тессе": _safe(doc_number_col, r) if doc_number_col else "",
+                "ID документа в Тессе": (
+                    _exec_int_str(r.get(doc_number_col)) if doc_number_col else ""
+                ),
                 "_rd_done": bool(_doc_id) and str(_doc_id) in _done_cards,
             }
         )
@@ -47508,6 +47552,7 @@ def dashboard_predpisania(df):
                     text=_txt_inner,
                     textposition="inside",
                     insidetextanchor="middle",
+                    textangle=0,
                     textfont=dict(color="#ffffff", size=14, family="Inter, Arial, sans-serif"),
                     hovertemplate="<b>%{y}</b><br>Просроченных: %{x}<extra></extra>",
                     showlegend=False,
@@ -47567,7 +47612,7 @@ def dashboard_predpisania(df):
                     range=[0, axis_upper_with_bubble],
                     title=dict(standoff=18),
                     automargin=True,
-                    fixedrange=True,
+                    fixedrange=False,
                 ),
                 yaxis=dict(
                     domain=list(_y_domain),
@@ -47575,9 +47620,9 @@ def dashboard_predpisania(df):
                     categoryarray=_y_cat_order,
                     automargin=True,
                     tickfont=dict(size=14),
-                    fixedrange=True,
+                    fixedrange=False,
                 ),
-                uirevision="pred_main_chart_v4",
+                uirevision="pred_main_chart_v5",
                 title=dict(
                     text=(
                         "Неустранённые предписания по подрядчикам"
@@ -47595,6 +47640,7 @@ def dashboard_predpisania(df):
                 fig1,
                 key="pred_bar_main",
                 caption_below="",
+                plotly_config_extra=_PLOTLY_CONFIG_FULL_MODEBAR,
             )
 
             # Второй чарт «по проектам» (зелёный) убран по требованию заказчика
@@ -47655,10 +47701,13 @@ def dashboard_predpisania(df):
             customdata=status_df[["Статус", "Доля"]].to_numpy(),
         )
         fig2 = apply_chart_background(fig2)
+        fig2 = _ensure_pie_full_modebar(fig2)
+        _inject_pie_modebar_zoom_sync()
         render_chart(
             fig2,
             key="pred_status_pie",
             caption_below=report_chart_caption_body("Предписания", granularity="по статусам"),
+            plotly_config_extra=_PLOTLY_CONFIG_FULL_MODEBAR,
         )
 
     if obj_col and obj_col in chart_df.columns:
@@ -47680,6 +47729,7 @@ def dashboard_predpisania(df):
                 fig3,
                 key=f"pred_by_obj_{int(hide_resolved)}",
                 caption_below=report_chart_caption_body("Предписания", granularity="по объектам"),
+                plotly_config_extra=_PLOTLY_CONFIG_FULL_MODEBAR,
             )
 
     st.subheader("Детальная таблица по предписаниям")
