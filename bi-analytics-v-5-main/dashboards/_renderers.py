@@ -41530,11 +41530,32 @@ def _render_forecast_lot_editor_sticky_header() -> None:
     )
 
 
+def _forecast_assign_editor_rows(
+    full_df: pd.DataFrame,
+    form_slice: pd.DataFrame,
+    page_orig_idx: list[int],
+) -> pd.DataFrame:
+    """Безопасно переносит строки редактора (по исходным индексам лотов) в полную таблицу."""
+    out = full_df.copy()
+    if form_slice is None or getattr(form_slice, "empty", True) or not page_orig_idx:
+        return out
+    for _j, _orig_i in enumerate(page_orig_idx):
+        if _j >= len(form_slice) or _orig_i < 0 or _orig_i >= len(out):
+            continue
+        _src = form_slice.iloc[_j]
+        for _col in form_slice.columns:
+            if _col not in out.columns:
+                continue
+            out.iat[_orig_i, out.columns.get_loc(_col)] = _src[_col]
+    return out
+
+
 def _render_forecast_lot_editor_widgets(
     edit_df: pd.DataFrame,
     *,
     key_prefix: str,
     dist_options: list[str],
+    row_key_ids: Optional[list[int]] = None,
 ) -> pd.DataFrame:
     """Редактор без Glide data_editor — text/number/select (курсор всегда виден)."""
     n = int(len(edit_df))
@@ -41542,6 +41563,9 @@ def _render_forecast_lot_editor_widgets(
         return edit_df.copy()
     _rows: list[dict] = []
     for _idx in range(n):
+        # Стабильный id виджета = исходный индекс лота (не позиция после сортировки),
+        # иначе при пересортировке A/B/C «переезжают» на другой лот.
+        _kid = int(row_key_ids[_idx]) if row_key_ids is not None and _idx < len(row_key_ids) else _idx
         _r = edit_df.iloc[_idx]
         _lot = str(_r.get("Лот", "") or "")
         _sec = str(_r.get("Раздел", "") or "")
@@ -41569,7 +41593,7 @@ def _render_forecast_lot_editor_widgets(
                 "усл",
                 dist_options,
                 index=_di,
-                key=f"{key_prefix}_dist_{_idx}",
+                key=f"{key_prefix}_dist_{_kid}",
                 label_visibility="collapsed",
             )
         _use_abc = _forecast_row_modes_use_abc(_dist)
@@ -41577,14 +41601,14 @@ def _render_forecast_lot_editor_widgets(
             _ps = st.text_input(
                 "нач",
                 value=str(_r.get("План. начало", "") or ""),
-                key=f"{key_prefix}_ps_{_idx}",
+                key=f"{key_prefix}_ps_{_kid}",
                 label_visibility="collapsed",
             )
         with _c[3]:
             _pe = st.text_input(
                 "кон",
                 value=str(_r.get("План. окончание", "") or ""),
-                key=f"{key_prefix}_pe_{_idx}",
+                key=f"{key_prefix}_pe_{_kid}",
                 label_visibility="collapsed",
             )
         with _c[4]:
@@ -41592,7 +41616,7 @@ def _render_forecast_lot_editor_widgets(
                 "план",
                 value=float(pd.to_numeric(_r.get("БДДС план (утверждённый), млн руб."), errors="coerce") or 0.0),
                 format="%.4f",
-                key=f"{key_prefix}_bp_{_idx}",
+                key=f"{key_prefix}_bp_{_kid}",
                 step=0.0001,
                 label_visibility="collapsed",
             )
@@ -41601,7 +41625,7 @@ def _render_forecast_lot_editor_widgets(
                 "факт",
                 value=float(pd.to_numeric(_r.get("БДДС факт, млн руб."), errors="coerce") or 0.0),
                 format="%.4f",
-                key=f"{key_prefix}_bf_{_idx}",
+                key=f"{key_prefix}_bf_{_kid}",
                 step=0.0001,
                 label_visibility="collapsed",
             )
@@ -41611,7 +41635,7 @@ def _render_forecast_lot_editor_widgets(
                 value=float(pd.to_numeric(_r.get("A, %"), errors="coerce") or 0.0),
                 format="%.2f",
                 step=0.01,
-                key=f"{key_prefix}_a_{_idx}",
+                key=f"{key_prefix}_a_{_kid}",
                 label_visibility="collapsed",
                 disabled=not _use_abc,
             )
@@ -41621,7 +41645,7 @@ def _render_forecast_lot_editor_widgets(
                 value=float(pd.to_numeric(_r.get("B, %"), errors="coerce") or 0.0),
                 format="%.2f",
                 step=0.01,
-                key=f"{key_prefix}_b_{_idx}",
+                key=f"{key_prefix}_b_{_kid}",
                 label_visibility="collapsed",
                 disabled=not _use_abc,
             )
@@ -41631,7 +41655,7 @@ def _render_forecast_lot_editor_widgets(
                 value=float(pd.to_numeric(_r.get("C, %"), errors="coerce") or 0.0),
                 format="%.2f",
                 step=0.01,
-                key=f"{key_prefix}_c_{_idx}",
+                key=f"{key_prefix}_c_{_kid}",
                 label_visibility="collapsed",
                 disabled=not _use_abc,
             )
@@ -41652,11 +41676,45 @@ def _render_forecast_lot_editor_widgets(
     return pd.DataFrame(_rows)
 
 
+def _forecast_parse_editor_date(v):
+    """Парсинг дат из полей редактора лотов.
+
+    Важно: строки вида ``YYYY-MM-DD`` нельзя кормить в ``dayfirst=True`` —
+    pandas 2+/3+ тогда читает их как ``YYYY-DD-MM`` (``2025-05-01`` → 5 янв,
+    ``2025-07-31`` → NaT), срок лота схлопывается и % A/B/C не даёт диффов.
+    """
+    if v is None or (isinstance(v, float) and pd.isna(v)):
+        return pd.NaT
+    if isinstance(v, pd.Timestamp):
+        return v
+    # date/datetime из стандартной библиотеки (имена не трогаем — в модуле есть
+    # локальные переменные/импорты, которые могут затенять ``datetime``).
+    if isinstance(v, date) and not isinstance(v, pd.Timestamp):
+        try:
+            return pd.Timestamp(v)
+        except Exception:
+            return pd.NaT
+    s = str(v).strip()
+    if not s or s.casefold() in ("nan", "nat", "none", "<na>"):
+        return pd.NaT
+    if re.fullmatch(r"\d{4}-\d{2}-\d{2}", s):
+        return pd.to_datetime(s, format="%Y-%m-%d", errors="coerce")
+    if re.fullmatch(r"\d{2}\.\d{2}\.\d{4}", s):
+        return pd.to_datetime(s, format="%d.%m.%Y", errors="coerce")
+    if re.fullmatch(r"\d{2}/\d{2}/\d{4}", s):
+        return pd.to_datetime(s, format="%d/%m/%Y", errors="coerce")
+    # Фоллбэк: сначала ISO/обычный, затем dayfirst для RU-ввода без точек.
+    ts = pd.to_datetime(s, errors="coerce", dayfirst=False)
+    if pd.isna(ts):
+        ts = pd.to_datetime(s, errors="coerce", dayfirst=True)
+    return ts
+
+
 def _forecast_work_df_from_edit_rows(project_df: pd.DataFrame, ed_rows: pd.DataFrame):
     updated_data = project_df.copy().reset_index(drop=True)
     ed_rows = ed_rows.reset_index(drop=True)
-    updated_data["plan start"] = pd.to_datetime(ed_rows["План. начало"], errors="coerce", dayfirst=True)
-    updated_data["plan end"] = pd.to_datetime(ed_rows["План. окончание"], errors="coerce", dayfirst=True)
+    updated_data["plan start"] = ed_rows["План. начало"].map(_forecast_parse_editor_date)
+    updated_data["plan end"] = ed_rows["План. окончание"].map(_forecast_parse_editor_date)
     updated_data["section"] = ed_rows["Лот"].map(_clean_display_str)
     updated_data["budget plan"] = (
         pd.to_numeric(ed_rows["БДДС план (утверждённый), млн руб."], errors="coerce").fillna(0.0) * 1e6
@@ -41697,8 +41755,10 @@ _FORECAST_EDITOR_HELP_MD = (
     "**Кто может редактировать:** Администратор, Суперадминистратор, РП, Финансист.\n\n"
     "1. В фильтре **Проект** выберите **один** проект (не «Все»).\n"
     "2. Меняйте **даты** (ГГГГ-ММ-ДД), **БДДС план/факт** (млн), **условие**, при «% Распределения» — **A+B+C = 100%**.\n"
-    "3. **«Применить правки»** — сохранить изменения в таблице.\n"
-    "4. График и «Таблица» обновятся после применения.\n\n"
+    "3. График и таблица пересчитываются **сразу** по значениям в полях; "
+    "**«Применить правки»** дополнительно фиксирует их в сессии.\n"
+    "4. Отклонение (план − прогноз) появляется только в **месяцах срока лота** "
+    "(от «План. начало» до «План. окончание»). Вне срока лота % A/B/C на месяц не влияет.\n\n"
     "**Служебные строки** (узлы MSP без сумм, уровень ≤2) скрыты по умолчанию — "
     "на расчёт **не влияют**. Чекбокс ниже — показать их в списке."
 )
@@ -41949,8 +42009,8 @@ def dashboard_forecast_budget(df):
             with st.expander("Как редактировать таблицу лотов", expanded=False):
                 st.markdown(_FORECAST_EDITOR_HELP_MD)
             st.caption(
-                "Поля ввода ниже → **«Применить правки»** (только текущая страница). "
-                "Правки в сессии до перезагрузки вкладки."
+                "Правки в полях сразу идут в график/таблицу. "
+                "**«Применить правки»** — зафиксировать в сессии (до перезагрузки вкладки)."
             )
         else:
             st.subheader("Данные задач (только просмотр)")
@@ -41960,8 +42020,8 @@ def dashboard_forecast_budget(df):
                 "Правки в таблице лотов: **Администратор**, **Суперадминистратор**, **РП** или **Финансист**."
             )
 
-        _data_key = f"forecast_edit_data_v9_{_npk_fc}"
-        _sig_key = f"forecast_edit_src_sig_v9_{_npk_fc}"
+        _data_key = f"forecast_edit_data_v10_{_npk_fc}"
+        _sig_key = f"forecast_edit_src_sig_v10_{_npk_fc}"
         _req_cols = (
             "Раздел",
             "Лот",
@@ -41978,25 +42038,56 @@ def dashboard_forecast_budget(df):
         _src_bf = float(pd.to_numeric(project_df.get("budget fact"), errors="coerce").fillna(0.0).sum())
         _src_sig = (len(project_df), round(_src_bp, 2), round(_src_bf, 2))
 
-        def _fc_reset_editor_data() -> None:
-            st.session_state[_data_key] = _build_forecast_edit_frame(project_df)
+        def _fc_reset_editor_data(*, preserve_dist: bool = False) -> None:
+            """Пересобрать редактор из файла; при preserve_dist сохранить условие/A/B/C по имени лота."""
+            _new = _build_forecast_edit_frame(project_df)
+            _prev = st.session_state.get(_data_key)
+            if (
+                preserve_dist
+                and isinstance(_prev, pd.DataFrame)
+                and not getattr(_prev, "empty", True)
+                and "Лот" in _prev.columns
+                and "Условие распределения" in _prev.columns
+            ):
+                _prev_by_lot: dict[str, pd.Series] = {}
+                for _, _pr in _prev.iterrows():
+                    _lk = str(_pr.get("Лот", "") or "").strip().casefold()
+                    if _lk:
+                        _prev_by_lot[_lk] = _pr
+                for _i in range(len(_new)):
+                    _lk = str(_new.at[_i, "Лот"] or "").strip().casefold()
+                    _pr = _prev_by_lot.get(_lk)
+                    if _pr is None:
+                        continue
+                    _new.at[_i, "Условие распределения"] = str(
+                        _pr.get("Условие распределения", "Равномерно") or "Равномерно"
+                    )
+                    for _c in ("A, %", "B, %", "C, %"):
+                        try:
+                            _v = float(pd.to_numeric(_pr.get(_c), errors="coerce"))
+                            if np.isfinite(_v):
+                                _new.at[_i, _c] = _v
+                        except Exception:
+                            pass
+            st.session_state[_data_key] = _new
             st.session_state[_sig_key] = _src_sig
 
         if _data_key not in st.session_state:
-            _fc_reset_editor_data()
+            _fc_reset_editor_data(preserve_dist=False)
         elif st.session_state.get(_sig_key) != _src_sig:
-            _fc_reset_editor_data()
+            # Суммы/число лотов из файла изменились (ingest) — суммы обновить, % A/B/C сохранить.
+            _fc_reset_editor_data(preserve_dist=True)
         elif len(st.session_state[_data_key]) != len(project_df):
-            _fc_reset_editor_data()
+            _fc_reset_editor_data(preserve_dist=True)
         else:
             _ed0 = st.session_state[_data_key]
             if any(c not in _ed0.columns for c in _req_cols):
-                _fc_reset_editor_data()
+                _fc_reset_editor_data(preserve_dist=False)
 
         if _can_edit_finance and st.button(
             "Сбросить таблицу к данным файла", key=f"forecast_reset_v8_{_npk_fc}"
         ):
-            _fc_reset_editor_data()
+            _fc_reset_editor_data(preserve_dist=False)
             st.rerun()
 
         _edit_df_live = st.session_state[_data_key].copy()
@@ -42049,21 +42140,27 @@ def dashboard_forecast_budget(df):
             with st.container(height=_body_h, border=True):
                 _form_slice = _render_forecast_lot_editor_widgets(
                     _slice_df,
-                    key_prefix=f"fcw_{_npk_fc}",
+                    key_prefix=f"fcw_v10_{_npk_fc}",
                     dist_options=_dist_options,
+                    row_key_ids=_page_orig_idx,
                 )
+            # Живые значения виджетов сразу участвуют в расчёте (не только после кнопки).
+            edited_df_out = _forecast_assign_editor_rows(
+                st.session_state[_data_key], _form_slice, _page_orig_idx
+            )
+            st.session_state[_data_key] = edited_df_out
             _fc_apply = st.button(
                 "Применить правки",
                 type="primary",
-                key=f"forecast_apply_{_npk_fc}",
+                key=f"forecast_apply_v10_{_npk_fc}",
+                help="Зафиксировать текущие значения полей в сессии. "
+                "График уже считается по полям без нажатия.",
             )
             if _fc_apply:
-                _full = st.session_state[_data_key].copy()
-                for _j, _orig_i in enumerate(_page_orig_idx):
-                    _full.iloc[_orig_i] = _form_slice.iloc[_j]
-                st.session_state[_data_key] = _full
+                st.session_state[f"forecast_apply_flash_v10_{_npk_fc}"] = True
                 st.rerun()
-            edited_df_out = st.session_state[_data_key].copy()
+            if st.session_state.pop(f"forecast_apply_flash_v10_{_npk_fc}", False):
+                st.success("Правки зафиксированы в сессии.")
         else:
             st.dataframe(_edit_df_live, width="stretch", height=_scroll_h, hide_index=True)
             edited_df_out = _edit_df_live.copy()
@@ -42093,6 +42190,41 @@ def dashboard_forecast_budget(df):
                 + "; ".join(_abc_bad[:8])
             )
             return
+
+        # % A/B/C меняет только раскладку по месяцам; при 1–2 месяцах срока часто = равномерно.
+        _abc_short: list[str] = []
+        for _i in range(len(ed_rows)):
+            if not _forecast_row_modes_use_abc(row_modes.iloc[_i]):
+                continue
+            _ps_i = _forecast_parse_editor_date(ed_rows.iloc[_i].get("План. начало"))
+            _pe_i = _forecast_parse_editor_date(ed_rows.iloc[_i].get("План. окончание"))
+            _n_m = len(_bdds_month_periods_inclusive(_ps_i, _pe_i))
+            if _n_m <= 0:
+                continue
+            _a = ed_rows.iloc[_i]["A, %"]
+            _c = ed_rows.iloc[_i]["C, %"]
+            _lot_lbl = str(ed_rows.iloc[_i].get("Лот", "") or "").strip() or f"строка {_i + 1}"
+            if _n_m == 1:
+                _abc_short.append(
+                    f"{_lot_lbl}: срок **1 месяц** — 30/40/30 даёт ту же сумму, что и «Равномерно» "
+                    f"(отклонение план−прогноз = 0)"
+                )
+            elif _n_m == 2:
+                try:
+                    _a_f, _c_f = float(_a), float(_c)
+                except (TypeError, ValueError):
+                    _a_f = _c_f = float("nan")
+                if np.isfinite(_a_f) and np.isfinite(_c_f) and abs(_a_f - _c_f) < 1e-9:
+                    _abc_short.append(
+                        f"{_lot_lbl}: срок **2 месяца** и A=C ({_a_f:.0f}%) — раскладка совпадает "
+                        f"с равномерной 50/50"
+                    )
+        if _abc_short:
+            st.warning(
+                "Для видимых диффов нужен срок лота **не меньше 3 месяцев** "
+                "(A — месяц начала, C — окончания, B — промежуточные). "
+                + "; ".join(_abc_short[:6])
+            )
 
         _baseline_edit_key = f"forecast_file_baseline_edit_v8_{_npk_fc}"
         _baseline_monthly_key = f"forecast_file_baseline_monthly_v8_{_npk_fc}"
@@ -42539,12 +42671,28 @@ def dashboard_forecast_budget(df):
         )
         _period_all_lbl = "Весь срок (итог по лоту)"
         _period_choices = [_period_all_lbl] + [format_period_ru(m) for m in _month_opts]
+        # Если есть «% Распределения» — по умолчанию первый месяц (на «весь срок» Δ всегда 0).
+        _oldnew_key = f"forecast_oldnew_period_{_npk_fc}"
+        _has_abc_rows = False
+        try:
+            _has_abc_rows = bool(
+                _fc_row_modes is not None
+                and any(_forecast_row_modes_use_abc(x) for x in _fc_row_modes.astype(str))
+            )
+        except Exception:
+            _has_abc_rows = False
+        if (
+            _has_abc_rows
+            and len(_period_choices) > 1
+            and _oldnew_key not in st.session_state
+        ):
+            st.session_state[_oldnew_key] = _period_choices[1]
         _sel_period_lbl = st.selectbox(
             "Прогноз за период",
             _period_choices,
-            key=f"forecast_oldnew_period_{_npk_fc}",
-            help="«Весь срок» — вся сумма лота. Выберите месяц, чтобы увидеть, "
-            "как условие распределения (равномерно / % A/B/C) меняет прогноз именно в этом месяце.",
+            key=_oldnew_key,
+            help="«Весь срок» — вся сумма лота (прогноз «было»=«стало» всегда: меняется только "
+            "раскладка по месяцам). Выберите месяц, чтобы увидеть эффект % A/B/C.",
         )
         _only_month = None
         if _sel_period_lbl != _period_all_lbl:
@@ -42554,30 +42702,37 @@ def dashboard_forecast_budget(df):
                     break
 
         if _only_month is None:
-            _fc_col_old = "Прогноз было (весь срок), млн руб."
-            _fc_col_new = "Прогноз стало (весь срок), млн руб."
+            _fc_col_old = "Прогноз равномерно (весь срок), млн руб."
+            _fc_col_new = "Прогноз по условию (весь срок), млн руб."
             st.caption(
-                "Исходные значения — из файла; «стало» — после ваших правок. "
-                "Прогноз показан за весь срок лота (сумма одинакова для «равномерно» и «% A/B/C» — "
-                "меняется только раскладка по месяцам). Выберите месяц в «Прогноз за период», "
-                "чтобы увидеть пересчёт прогноза за конкретный месяц."
+                "Сравнение на **текущих** датах/суммах редактора: "
+                "«равномерно» vs ваше условие (% A/B/C). "
+                "За весь срок сумма одинакова (Δ = 0) — меняется только раскладка по месяцам. "
+                "Выберите месяц в «Прогноз за период», чтобы увидеть Δ."
             )
         else:
-            _fc_col_old = f"Прогноз было ({_sel_period_lbl}), млн руб."
-            _fc_col_new = f"Прогноз стало ({_sel_period_lbl}), млн руб."
+            _fc_col_old = f"Прогноз равномерно ({_sel_period_lbl}), млн руб."
+            _fc_col_new = f"Прогноз по условию ({_sel_period_lbl}), млн руб."
             st.caption(
-                f"Исходные значения — из файла; «стало» — после ваших правок. "
-                f"Прогноз — доля лота, приходящаяся на {_sel_period_lbl} "
-                f"(равномерно = сумма ÷ число месяцев срока; % A/B/C = A в месяце начала, "
-                f"C в месяце окончания, B поровну по промежуточным)."
+                f"Сравнение на **текущих** датах/суммах: равномерно vs условие строки "
+                f"за {_sel_period_lbl}. "
+                f"% A/B/C: A — месяц начала, C — окончания, B — поровну по промежуточным."
             )
 
         _lot_oldnew_df: Optional[pd.DataFrame] = None
         try:
+            # «Было» = те же даты/суммы, что сейчас в редакторе, но условие «Равномерно».
+            # Иначе сравнение с исходным файлом (другие даты) маскирует эффект % A/B/C:
+            # на выбранном месяце оба прогноза могут совпасть или оба стать 0.
+            _uniform_modes = pd.Series(
+                ["Равномерно"] * len(_fc_updated_data),
+                index=_fc_updated_data.index,
+                dtype=object,
+            )
             _base_tot = _forecast_per_lot_distribution_totals(
-                _fc_base_work,
-                abc_source=_fc_base_abc,
-                row_modes=_fc_base_modes,
+                _fc_updated_data,
+                abc_source=_fc_abc_src,
+                row_modes=_uniform_modes,
                 only_month=_only_month,
             )
             _cur_tot = _forecast_per_lot_distribution_totals(
@@ -42590,6 +42745,11 @@ def dashboard_forecast_budget(df):
                 _pcol = "БДДС план (утверждённый), млн руб."
                 _fcol = "БДДС факт, млн руб."
                 _gcol = "БДДС прогноз (итого), млн руб."
+                _delta_col = (
+                    f"Δ прогноз ({_sel_period_lbl}), млн руб."
+                    if _only_month is not None
+                    else "Δ прогноз (весь срок), млн руб."
+                )
                 _base_by_lot = (
                     _base_tot.set_index("Лот") if not _base_tot.empty else pd.DataFrame()
                 )
@@ -42601,34 +42761,51 @@ def dashboard_forecast_budget(df):
                     _fc_new = float(_cr.get(_gcol, 0.0) or 0.0)
                     if not _base_by_lot.empty and _lot in _base_by_lot.index:
                         _br = _base_by_lot.loc[_lot]
-                        _bp_old = float(_br.get(_pcol, 0.0) or 0.0)
-                        _bf_old = float(_br.get(_fcol, 0.0) or 0.0)
+                        if isinstance(_br, pd.DataFrame):
+                            _br = _br.iloc[0]
                         _fc_old = float(_br.get(_gcol, 0.0) or 0.0)
                     else:
-                        _bp_old = _bp_new
-                        _bf_old = _bf_new
                         _fc_old = _fc_new
                     _on_rows.append(
                         {
                             "Лот": _lot,
-                            "БДДС план было, млн руб.": round(_bp_old, 1),
-                            "БДДС план стало, млн руб.": round(_bp_new, 1),
-                            "БДДС факт было, млн руб.": round(_bf_old, 1),
-                            "БДДС факт стало, млн руб.": round(_bf_new, 1),
+                            "БДДС план, млн руб.": round(_bp_new, 1),
+                            "БДДС факт, млн руб.": round(_bf_new, 1),
                             _fc_col_old: round(_fc_old, 1),
                             _fc_col_new: round(_fc_new, 1),
+                            _delta_col: round(_fc_new - _fc_old, 1),
                         }
                     )
                 if _on_rows:
                     _lot_oldnew_df = pd.DataFrame(_on_rows)
+                    # Лоты с ненулевой Δ — сверху, чтобы 30-40-30 было видно сразу.
+                    if _delta_col in _lot_oldnew_df.columns:
+                        _lot_oldnew_df = _lot_oldnew_df.reindex(
+                            _lot_oldnew_df[_delta_col].abs().sort_values(ascending=False).index
+                        ).reset_index(drop=True)
         except Exception:
             _lot_oldnew_df = None
 
         if _lot_oldnew_df is not None and not _lot_oldnew_df.empty:
+            _delta_col_show = next(
+                (c for c in _lot_oldnew_df.columns if str(c).startswith("Δ прогноз")),
+                None,
+            )
+            _cond_oldnew = None
+            if _delta_col_show:
+                from dashboards.light_theme import finance_dev_negative_color
+
+                _cond_oldnew = {
+                    _delta_col_show: {
+                        "positive_color": "hsl(348,100%,63%)",
+                        "negative_color": finance_dev_negative_color(),
+                    }
+                }
             _render_format_dataframe_html(
                 _lot_oldnew_df,
                 file_stem="forecast_bddcs_lot_oldnew",
                 key_prefix=f"fcast_oldnew_{_npk_fc}",
+                conditional_cols=_cond_oldnew,
                 finance_decimal_places=1,
                 table_scroll_max_height_vh=60.0,
             )
