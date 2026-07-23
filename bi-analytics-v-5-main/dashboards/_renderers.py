@@ -39496,10 +39496,8 @@ def dashboard_budget_old_charts(df):
 
 def _bdds_month_periods_inclusive(start, end):
     """Календарные месяцы от месяца даты «Начало» до месяца «Окончание» включительно."""
-    if pd.isna(start) or pd.isna(end):
-        return []
-    ts = pd.to_datetime(start, errors="coerce", dayfirst=True)
-    te = pd.to_datetime(end, errors="coerce", dayfirst=True)
+    ts = _forecast_parse_editor_date(start)
+    te = _forecast_parse_editor_date(end)
     if pd.isna(ts) or pd.isna(te) or ts > te:
         return []
     cur = pd.Timestamp(ts.year, ts.month, 1)
@@ -39564,8 +39562,8 @@ def _bdds_build_monthly_summary_from_msp(
         return pd.DataFrame()
     ws = work_df.copy()
     ensure_budget_columns(ws)
-    ws["plan start"] = pd.to_datetime(ws["plan start"], errors="coerce", dayfirst=True)
-    ws["plan end"] = pd.to_datetime(ws["plan end"], errors="coerce", dayfirst=True)
+    ws["plan start"] = ws["plan start"].map(_forecast_parse_editor_date)
+    ws["plan end"] = ws["plan end"].map(_forecast_parse_editor_date)
     ws["budget plan"] = pd.to_numeric(ws["budget plan"], errors="coerce").fillna(0.0)
     ws["budget fact"] = pd.to_numeric(ws.get("budget fact", 0), errors="coerce").fillna(0.0)
     buckets: dict[tuple[str, pd.Period], dict[str, float]] = {}
@@ -39690,8 +39688,8 @@ def _bdds_msp_monthly_plan_activity(work_df: pd.DataFrame) -> dict:
     ws = work_df.copy()
     if "plan start" not in ws.columns or "plan end" not in ws.columns or "budget plan" not in ws.columns:
         return {}
-    ws["plan start"] = pd.to_datetime(ws["plan start"], errors="coerce", dayfirst=True)
-    ws["plan end"] = pd.to_datetime(ws["plan end"], errors="coerce", dayfirst=True)
+    ws["plan start"] = ws["plan start"].map(_forecast_parse_editor_date)
+    ws["plan end"] = ws["plan end"].map(_forecast_parse_editor_date)
     ws["budget plan"] = pd.to_numeric(ws["budget plan"], errors="coerce").fillna(0.0)
     all_months = set()
     for _, r in ws.iterrows():
@@ -39730,8 +39728,8 @@ def compute_bddcs_forecast_monthly(
     miss = [c for c in req if c not in df.columns]
     if miss:
         return pd.DataFrame(), f"Отсутствуют колонки: {', '.join(miss)}"
-    df["plan start"] = pd.to_datetime(df["plan start"], errors="coerce", dayfirst=True)
-    df["plan end"] = pd.to_datetime(df["plan end"], errors="coerce", dayfirst=True)
+    df["plan start"] = df["plan start"].map(_forecast_parse_editor_date)
+    df["plan end"] = df["plan end"].map(_forecast_parse_editor_date)
     df["budget plan"] = pd.to_numeric(df["budget plan"], errors="coerce").fillna(0.0)
     if "budget fact" in df.columns:
         df["budget fact"] = pd.to_numeric(df["budget fact"], errors="coerce").fillna(0.0)
@@ -39788,8 +39786,10 @@ def compute_bddcs_forecast_monthly(
             if not _bdds_abc_is_valid(a, b, c):
                 lot = str(r.get("section", r.get("task name", "")) or "").strip() or f"строка {pos + 1}"
                 abc_errors.append(f"{lot}: A+B+C={_bdds_abc_sum(a, b, c):.2f}% (нужно 100%)")
-                continue
-            dp = _bdds_distribute_row_abc(plan_amt, ps, pe, a, b, c)
+                # Не теряем прогноз: пока доли невалидны — считаем равномерно.
+                dp = _bdds_distribute_row_uniform(plan_amt, ps, pe)
+            else:
+                dp = _bdds_distribute_row_abc(plan_amt, ps, pe, a, b, c)
         else:
             dp = _bdds_distribute_row_uniform(plan_amt, ps, pe)
         for m, v in dp.items():
@@ -39869,8 +39869,8 @@ def _forecast_per_lot_distribution_totals(
     rows_out: List[dict] = []
     for pos in range(len(df)):
         r = df.iloc[pos]
-        ps = pd.to_datetime(r.get("plan start"), errors="coerce", dayfirst=True)
-        pe = pd.to_datetime(r.get("plan end"), errors="coerce", dayfirst=True)
+        ps = _forecast_parse_editor_date(r.get("plan start"))
+        pe = _forecast_parse_editor_date(r.get("plan end"))
         plan_amt = float(pd.to_numeric(r.get("budget plan"), errors="coerce") or 0.0)
         fact_amt = float(pd.to_numeric(r.get("budget fact"), errors="coerce") or 0.0)
         lot = _forecast_row_lot_label(r)
@@ -40938,10 +40938,18 @@ def _forecast_aggregate_by_lot(pdf: pd.DataFrame) -> pd.DataFrame:
         return pdf
     work = pdf.copy().reset_index(drop=True)
     ensure_budget_columns(work)
-    work["plan start"] = pd.to_datetime(work.get("plan start"), errors="coerce", dayfirst=True)
-    work["plan end"] = pd.to_datetime(work.get("plan end"), errors="coerce", dayfirst=True)
-    work["budget plan"] = pd.to_numeric(work.get("budget plan"), errors="coerce").fillna(0.0)
-    work["budget fact"] = pd.to_numeric(work.get("budget fact"), errors="coerce").fillna(0.0)
+    if "budget plan" not in work.columns:
+        work["budget plan"] = 0.0
+    if "budget fact" not in work.columns:
+        work["budget fact"] = 0.0
+    if "plan start" not in work.columns:
+        work["plan start"] = pd.NaT
+    if "plan end" not in work.columns:
+        work["plan end"] = pd.NaT
+    work["plan start"] = work["plan start"].map(_forecast_parse_editor_date)
+    work["plan end"] = work["plan end"].map(_forecast_parse_editor_date)
+    work["budget plan"] = pd.to_numeric(work["budget plan"], errors="coerce").fillna(0.0)
+    work["budget fact"] = pd.to_numeric(work["budget fact"], errors="coerce").fillna(0.0)
     _proj = (
         work["project name"].iloc[0]
         if "project name" in work.columns and len(work)
@@ -41023,6 +41031,11 @@ def _forecast_prepare_msp_slice(pdf_raw: pd.DataFrame, project_display_name: str
     if "task name" not in pdf.columns:
         pdf["task name"] = ""
     pdf = _forecast_deduplicate_msp_rows(pdf)
+    # ISO-даты YYYY-MM-DD нельзя парсить через dayfirst (ломает 2024-06-01 → 2024-01-06).
+    if "plan start" in pdf.columns:
+        pdf["plan start"] = pdf["plan start"].map(_forecast_parse_editor_date)
+    if "plan end" in pdf.columns:
+        pdf["plan end"] = pdf["plan end"].map(_forecast_parse_editor_date)
     return pdf, None
 
 
@@ -41167,44 +41180,46 @@ def _forecast_overlay_turnover_on_monthly(
     mf: pd.DataFrame,
     turnover: dict,
 ) -> pd.DataFrame:
-    """Подменяет план/факт в помесячном ряду данными оборотов 1С где они есть."""
+    """Дополняет помесячный ряд месяцами из оборотов 1С, не подменяя план/факт MSP.
+
+    План/факт/прогноз на этом экране считаются из таблицы лотов (равномерно или % A/B/C).
+    Раньше обороты 1С затирали MSP-план/факт → после смены условия лота «прогноз»
+    визуально «не пересчитывался» относительно чужих цифр 1С, а ожидаемые доли A%
+    (напр. 34% от суммы лотов с началом в месяце) не сходились с таблицей.
+    1С здесь только добавляет месяцы, которых нет в MSP-ряде (план/факт/прогноз = 0).
+    """
     if mf is None or getattr(mf, "empty", True):
         return mf
     out = mf.copy()
     if not turnover:
         return out
-    fc_by_m = {}
-    for _, rr in out.iterrows():
-        mk = _forecast_norm_month_period(rr["month"])
-        fc_by_m[mk] = float(rr.get("bdds_forecast", 0.0) or 0.0)
-    turn_norm = {_forecast_norm_month_period(k): v for k, v in turnover.items()}
-    months_all = sorted(set(fc_by_m.keys()) | set(turn_norm.keys()), key=lambda x: str(x))
-    rows = []
-    for m in months_all:
-        hit = out.loc[out["month"].map(_forecast_norm_month_period) == m]
-        msp_plan = (
-            float(hit.iloc[0].get("bdds_plan_msp", 0.0) or 0.0) if not hit.empty else 0.0
-        )
-        msp_fact = (
-            float(hit.iloc[0].get("bdds_fact", 0.0) or 0.0) if not hit.empty else 0.0
-        )
-        if m in turn_norm:
-            plan_rub, fact_rub = turn_norm[m]
-            if float(plan_rub or 0.0) <= 0.0:
-                plan_rub = msp_plan
-            if float(fact_rub or 0.0) <= 0.0:
-                fact_rub = msp_fact
-        else:
-            plan_rub, fact_rub = msp_plan, msp_fact
-        rows.append(
+    existing = {
+        _forecast_norm_month_period(m)
+        for m in out["month"].tolist()
+    }
+    extra_rows: list[dict] = []
+    for m, (_pl, _fc) in turnover.items():
+        mk = _forecast_norm_month_period(m)
+        if mk is pd.NaT or (isinstance(mk, float) and pd.isna(mk)):
+            continue
+        if mk in existing:
+            continue
+        # Месяц есть только в оборотах — оставляем нули, чтобы не смешивать источники.
+        extra_rows.append(
             {
-                "month": m,
-                "bdds_plan_msp": plan_rub,
-                "bdds_fact": fact_rub,
-                "bdds_forecast": float(fc_by_m.get(m, 0.0)),
+                "month": mk,
+                "bdds_plan_msp": 0.0,
+                "bdds_fact": 0.0,
+                "bdds_forecast": 0.0,
             }
         )
-    return pd.DataFrame(rows).sort_values("month").reset_index(drop=True)
+    if not extra_rows:
+        return out
+    return (
+        pd.concat([out, pd.DataFrame(extra_rows)], ignore_index=True)
+        .sort_values("month")
+        .reset_index(drop=True)
+    )
 
 
 
@@ -41382,29 +41397,35 @@ def _forecast_financier_status_dataset(
     monthly_snapshot: Optional[pd.DataFrame] = None,
     dev_base: str = "БДДС план",
 ) -> pd.DataFrame:
-    """Строки для таблицы «Статус»: план/факт из оборотов 1С, прогноз после правок лотов."""
+    """Строки для таблицы «Статус»: план/факт/прогноз из распределения по лотам (MSP).
+
+    Обороты 1С — только запасной источник, если в помесячном MSP-ряде нет месяца.
+    """
     rows: List[dict] = []
 
     def _append_from_mf(mf: pd.DataFrame, lab: str, turnover: dict) -> None:
         fc_by_m: dict = {}
+        plan_by_m: dict = {}
+        fact_by_m: dict = {}
         if mf is not None and not getattr(mf, "empty", True):
             for _, rr in mf.iterrows():
                 mk = _forecast_norm_month_period(rr["month"])
                 fc_by_m[mk] = float(rr.get("bdds_forecast", 0.0) or 0.0)
+                plan_by_m[mk] = float(rr.get("bdds_plan_msp", 0.0) or 0.0)
+                fact_by_m[mk] = float(rr.get("bdds_fact", 0.0) or 0.0)
         turn_norm = {_forecast_norm_month_period(k): v for k, v in turnover.items()}
-        months_all = sorted(set(fc_by_m.keys()) | set(turn_norm.keys()), key=lambda x: str(x))
+        months_all = sorted(
+            set(fc_by_m.keys()) | set(plan_by_m.keys()) | set(turn_norm.keys()),
+            key=lambda x: str(x),
+        )
         if not months_all and mf is not None and not getattr(mf, "empty", True):
             months_all = list(mf["month"])
         for m in months_all:
-            plan_rub = 0.0
-            fact_rub = 0.0
-            if m in turn_norm:
+            plan_rub = float(plan_by_m.get(m, 0.0) or 0.0)
+            fact_rub = float(fact_by_m.get(m, 0.0) or 0.0)
+            # 1С — только если MSP не дал сумм по месяцу (нет лотов в сроке).
+            if abs(plan_rub) + abs(fact_rub) <= 1e-6 and m in turn_norm:
                 plan_rub, fact_rub = turn_norm[m]
-            elif mf is not None and not getattr(mf, "empty", True):
-                hit = mf.loc[mf["month"].map(_forecast_norm_month_period) == m]
-                if not hit.empty:
-                    plan_rub = float(hit.iloc[0].get("bdds_plan_msp", 0.0) or 0.0)
-                    fact_rub = float(hit.iloc[0].get("bdds_fact", 0.0) or 0.0)
             rows.append(
                 {
                     "_period": m,
@@ -41933,8 +41954,13 @@ _FORECAST_EDITOR_HELP_MD = (
     "2. Меняйте **даты** (ГГГГ-ММ-ДД), **БДДС план/факт** (млн), **условие**, при «% Распределения» — **A+B+C = 100%**.\n"
     "3. График и таблица пересчитываются **сразу** по значениям в полях; "
     "**«Применить правки»** дополнительно фиксирует их в сессии.\n"
-    "4. Отклонение (план − прогноз) появляется только в **месяцах срока лота** "
-    "(от «План. начало» до «План. окончание»). Вне срока лота % A/B/C на месяц не влияет.\n\n"
+    "4. **План** и **факт** по месяцам: сумма лота делится **равномерно** на число месяцев "
+    "между «План. начало» и «План. окончание».\n"
+    "5. **Прогноз (уточнённый план)** при «Равномерно» — та же помесячная доля плана; "
+    "при «% Распределения» — **A%** в месяц начала, **C%** в месяц окончания, "
+    "**B%** поровну по промежуточным месяцам.\n"
+    "6. Отклонение (план − прогноз) видно в **месяцах срока лота**. "
+    "Вне срока лота % A/B/C на месяц не влияет.\n\n"
     "**Служебные строки** (узлы MSP без сумм, уровень ≤2) скрыты по умолчанию — "
     "на расчёт **не влияют**. Чекбокс ниже — показать их в списке."
 )
@@ -42145,15 +42171,15 @@ def dashboard_forecast_budget(df):
 
         def _build_forecast_edit_frame(pdf: pd.DataFrame) -> pd.DataFrame:
             cur = pdf.copy().reset_index(drop=True)
-            ps = pd.to_datetime(cur["plan start"], errors="coerce", dayfirst=True)
-            pe = pd.to_datetime(cur["plan end"], errors="coerce", dayfirst=True)
+            ps = cur["plan start"].map(_forecast_parse_editor_date)
+            pe = cur["plan end"].map(_forecast_parse_editor_date)
             bp = pd.to_numeric(cur["budget plan"], errors="coerce").fillna(0.0)
             if "budget fact" in cur.columns:
                 bf = pd.to_numeric(cur["budget fact"], errors="coerce").fillna(0.0)
             else:
                 bf = pd.Series(0.0, index=cur.index)
-            plan_start_str = ps.dt.strftime("%Y-%m-%d").fillna("")
-            plan_end_str = pe.dt.strftime("%Y-%m-%d").fillna("")
+            plan_start_str = pd.to_datetime(ps, errors="coerce").dt.strftime("%Y-%m-%d").fillna("")
+            plan_end_str = pd.to_datetime(pe, errors="coerce").dt.strftime("%Y-%m-%d").fillna("")
             n = len(cur)
             _block = cur["section"].astype(str)
             if "BLOCK" in cur.columns:
