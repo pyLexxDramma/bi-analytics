@@ -35148,39 +35148,50 @@ def _pd_pick_finish_col(
 
 def _pd_dynamics_line_tasks_mask(df: pd.DataFrame, masks: dict) -> pd.Series:
     """
-    Задачи для линий «План» / «Прогноз» на графике «Динамика выдачи ПД»:
-    ур.5, родитель ур.4 «Этап … Проектная документация», в названии — «Раздел».
+    Задачи для линий «План»/«Прогноз»/«Факт» и KPI «План по проекту (БП)».
+
+    Считаем ВСЕ разделы ПД проекта (ур.5, шифр ПД/РД, ветка «Проектная
+    документация» по block/предку), а не только под непосредственным этапом
+    «Этап … Проектная документация». Прежняя маска требовала, чтобы
+    НЕПОСРЕДСТВЕННЫЙ родитель был этим этапом (по порядку строк), из-за чего:
+      1) «План по проекту (БП)» занижался — учитывался лишь один этап
+         (Дмитровский: 20 из ~60 разделов ПД, без корректировки/согласования/
+         экспертизы, хотя в источнике задач по ПД больше 50);
+      2) KPI «схлопывался» до 4-5 при фильтрации (Статус/Период/Раздел):
+         удаление строки-этапа ломало определение родителя.
+    Используем block-ориентированную metrics_mask (её же применяет пирог
+    «Исполнение ПД»), не зависящую от порядка строк.
     """
     empty = pd.Series(False, index=df.index)
-    level_col = masks.get("level_col")
-    name_col = masks.get("name_col")
-    hier_col = masks.get("hier_col")
-    if (
-        not level_col
-        or not name_col
-        or not hier_col
-        or level_col not in df.columns
-        or name_col not in df.columns
-        or hier_col not in df.columns
-    ):
-        return masks.get("dynamics_mask", empty).fillna(False)
-    lv_num = outline_level_numeric(df[level_col])
-    parent_names = _pd_msp_immediate_parent_names(df, hier_col, name_col)
-    parent_pd = parent_names.map(_pd_msp_parent_is_pd_stage)
-    razdel_m = df[name_col].astype(str).str.contains("раздел", case=False, na=False)
-    # ПД-раздел под этапом «Проектная документация»: либо имя содержит «раздел»,
-    # либо есть шифр ПД/РД. Иначе теряются разделы с шифром без слова «раздел»
-    # в названии (ТЗ «Задание на проектирование», ТБЭ «Проект „Требования…“»),
-    # и «План по проекту (БП)» занижается (Дмитровский: 17 вместо 20 по источнику).
-    _cipher_col, _cipher_ok = _pd_cipher_filled_mask(df)
-    _cipher_ok = _cipher_ok.fillna(False) if _cipher_col else pd.Series(False, index=df.index)
-    strict = lv_num.eq(5) & parent_pd & (razdel_m | _cipher_ok)
-    if strict.any():
-        return strict
+    metrics = masks.get("metrics_mask", empty).fillna(False)
+    if metrics.any():
+        return metrics
     dyn = masks.get("dynamics_mask", empty).fillna(False)
     if dyn.any():
         return dyn
-    return masks.get("metrics_mask", empty).fillna(False)
+    # Fallback: ур.5 в ветке «Проектная документация» с шифром (без опоры на
+    # непосредственного родителя-этап), если metrics/dynamics недоступны.
+    level_col = masks.get("level_col")
+    name_col = masks.get("name_col")
+    hier_col = masks.get("hier_col")
+    block_col = masks.get("block_col")
+    if (
+        level_col and level_col in df.columns
+        and name_col and name_col in df.columns
+        and hier_col and hier_col in df.columns
+    ):
+        lv_num = outline_level_numeric(df[level_col])
+        ancestor_pd = _pd_msp_ancestor_under_pd_stage(
+            df, hier_col, name_col, block_col=block_col
+        )
+        _cipher_col, _cipher_ok = _pd_cipher_filled_mask(df)
+        _cipher_ok = (
+            _cipher_ok.fillna(False) if _cipher_col else pd.Series(False, index=df.index)
+        )
+        fb = lv_num.eq(5) & ancestor_pd & _cipher_ok
+        if fb.any():
+            return fb
+    return empty
 
 
 def _pd_dynamics_chart_row_mask(
@@ -35631,7 +35642,9 @@ def dashboard_documentation(
                             key=lambda x: x.casefold(),
                         )
                 _sec_ms_key = f"{_doc_fk}section_filter_ms"
-                _sync_multiselect_session_state(_sec_ms_key, section_options)
+                _sync_multiselect_session_state(
+                    _sec_ms_key, section_options, all_by_default=False
+                )
                 selected_sections_doc = st.multiselect(
                     "Вид раздела",
                     options=section_options,
@@ -35649,7 +35662,9 @@ def dashboard_documentation(
                     key=lambda x: x.casefold(),
                 )
                 _sec_ms_key = f"{_doc_fk}section_filter_ms"
-                _sync_multiselect_session_state(_sec_ms_key, section_options)
+                _sync_multiselect_session_state(
+                    _sec_ms_key, section_options, all_by_default=False
+                )
                 selected_sections_doc = st.multiselect(
                     "Вид раздела",
                     options=section_options,
@@ -35670,7 +35685,9 @@ def dashboard_documentation(
                     key=lambda x: x.casefold(),
                 )
                 _sec_ms_key = f"{_doc_fk}section_filter_ms"
-                _sync_multiselect_session_state(_sec_ms_key, section_options)
+                _sync_multiselect_session_state(
+                    _sec_ms_key, section_options, all_by_default=False
+                )
                 selected_sections_doc = st.multiselect(
                     "Раздел",
                     options=section_options,
@@ -35688,7 +35705,9 @@ def dashboard_documentation(
                     key=lambda x: x.casefold(),
                 )
                 _sec_ms_key = f"{_doc_fk}section_filter_ms"
-                _sync_multiselect_session_state(_sec_ms_key, section_options)
+                _sync_multiselect_session_state(
+                    _sec_ms_key, section_options, all_by_default=False
+                )
                 selected_sections_doc = st.multiselect(
                     "Раздел",
                     options=section_options,
@@ -37251,10 +37270,7 @@ def dashboard_documentation(
                             elif "Прогноз" in _tn:
                                 _tr.line.color = _PD_FCST_LINE_COLOR
                                 _tr.line.width = 3
-                                # Пунктир: если прогноз совпадает с планом (нет базового
-                                # окончания — обе линии падают на plan end), синяя линия
-                                # плана видна сквозь разрывы оранжевого прогноза.
-                                _tr.line.dash = "dash"
+                                _tr.line.dash = "solid"
                                 _tr.marker.color = _PD_FCST_LINE_COLOR
                                 _tr.marker.size = 9
                                 _tr.textfont = dict(color=_PD_FCST_LINE_COLOR, size=10)

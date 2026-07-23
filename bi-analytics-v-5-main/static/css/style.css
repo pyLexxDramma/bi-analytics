@@ -1504,18 +1504,37 @@ html body .st-key-pd_dev_metric_neg [data-testid="metric-container"] [data-testi
     -webkit-text-fill-color: inherit !important;
 }
 
-/* Сегменты / pills / кнопки-переключатели (новые виджеты Streamlit) */
+/* Сегменты / pills / кнопки-переключатели (Streamlit 1.56: stBaseButton-pills / -pillsActive) */
 [data-testid="stPills"] button,
 [data-testid="stPills"] [role="tab"],
-[data-testid="stSegmentedControl"] button {
+[data-testid="stPills"] button[data-testid="stBaseButton-pills"],
+[data-testid="stPills"] button[data-testid="stBaseButton-pillsActive"],
+[data-testid="stSegmentedControl"] button,
+[data-testid="stSegmentedControl"] button[data-testid="stBaseButton-segmented_control"],
+[data-testid="stSegmentedControl"] button[data-testid="stBaseButton-segmented_controlActive"] {
     color: #f1f5f9 !important;
     background-color: #1a2942 !important;
     border-color: rgba(255, 255, 255, 0.25) !important;
 }
+/* Текст пилюль наследует цвет кнопки (иначе после отжатия становится чёрным/невидимым) */
+[data-testid="stPills"] button p,
+[data-testid="stPills"] button span,
+[data-testid="stPills"] button div,
+[data-testid="stSegmentedControl"] button p,
+[data-testid="stSegmentedControl"] button span,
+[data-testid="stSegmentedControl"] button div {
+    color: inherit !important;
+    -webkit-text-fill-color: currentColor !important;
+}
+/* Активная (нажатая) пилюля */
+[data-testid="stPills"] button[data-testid="stBaseButton-pillsActive"],
+[data-testid="stPills"] button[aria-pressed="true"],
 [data-testid="stPills"] [aria-selected="true"],
+[data-testid="stSegmentedControl"] button[data-testid="stBaseButton-segmented_controlActive"],
 [data-testid="stSegmentedControl"] [aria-selected="true"] {
     background-color: #12385c !important;
     color: #ffffff !important;
+    border-color: #29b6f6 !important;
 }
 
 /* Автосписок страниц Streamlit: скрыть целиком — навигация только через кастомное меню (кнопки). */
