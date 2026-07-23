@@ -18433,12 +18433,14 @@ def _fmt_rd_deviation_days_display(series) -> pd.Series:
 
 
 def _apply_rd_detail_deviation_columns(tbl: pd.DataFrame) -> pd.DataFrame:
-    """Отклонения РД по ТЗ (положит. число = просрочка):
-      • «от даты по договору» = (Дата выдачи в производство работ, а для
-        невыданных разделов — Прогнозная дата) − Дата по договору; без
-        прогнозной (и без факта) — пусто «—»;
-      • «от прогнозной даты» = Дата выдачи в производство работ − Прогнозная
-        дата; для невыданных разделов (нет факта) — пусто «—».
+    """Отклонения РД по ТЗ. Числитель един для обеих колонок: «Дата выдачи в
+    производство работ», а если раздел ещё не выдан — сегодняшняя дата.
+    Знак по ТЗ: просрочка — ОТРИЦАТЕЛЬНАЯ (красная с «−»), опережение/в срок —
+    положительное (зелёное). Т.е. отклонение = дата − (факт|сегодня).
+      • «от даты по договору» = Дата по договору − (факт выдачи | сегодня);
+        без плановой даты по договору — пусто «—»;
+      • «от прогнозной даты» = Прогнозная дата (срок по распоряжениям/указаниям
+        ПИГ) − (факт выдачи | сегодня); без прогнозной — пусто «—».
     """
     if tbl is None or getattr(tbl, "empty", True):
         return tbl
@@ -18474,14 +18476,16 @@ def _apply_rd_detail_deviation_columns(tbl: pd.DataFrame) -> pd.DataFrame:
         if fc_col in out.columns
         else pd.Series(pd.NaT, index=out.index)
     )
+    _today = pd.Timestamp.now().normalize()
     _issued = prod_dt.notna()
-    # «От даты по договору»: выдан → факт − договор; не выдан → прогноз − договор
-    # (плановое отставание). Нет ни факта, ни прогноза → NaT → «—».
-    _base_dogovor = prod_dt.where(_issued, fc_dt)
-    out["Отклонение от даты по договору, дн"] = (_base_dogovor - plan_dt).dt.days
-    # «От прогнозной даты»: только по факту выдачи (факт − прогноз); без факта
-    # или без прогноза → NaT → «—».
-    out["Отклонение от прогнозной даты, дн"] = (prod_dt - fc_dt).dt.days
+    # ТЗ: числитель = факт выдачи в производство работ; если раздел не выдан —
+    # сегодняшняя дата (текущая просрочка). Единый базис для обеих колонок.
+    _base = prod_dt.where(_issued, _today)
+    # Знак: дата − (факт|сегодня) → просрочка отрицательная (красная с «−»),
+    # опережение/в срок — положительное (зелёное). Нет плановой даты → NaT → «—».
+    out["Отклонение от даты по договору, дн"] = (plan_dt - _base).dt.days
+    # «От прогнозной даты»: прогнозная − (факт|сегодня). Нет прогнозной → «—».
+    out["Отклонение от прогнозной даты, дн"] = (fc_dt - _base).dt.days
     out["Отклонение, дн"] = out["Отклонение от прогнозной даты, дн"]
     return out
 
@@ -18960,7 +18964,8 @@ def _render_rd_working_doc_monthly_and_detail(
             days_column="Отклонение от даты по договору",
             extra_days_columns=("Отклонение от прогнозной даты",),
             days_deviation_gradient=True,
-            days_positive_is_ahead=False,
+            # ТЗ: < 0 — красный (с «−»), ≥ 0 — зелёный.
+            days_positive_is_ahead=True,
         ),
         _tessa_tbl,
         file_stem="rd_work_doc_detail",
@@ -19714,8 +19719,8 @@ def _render_rd_delay_overdue_bar_chart(
         st.info("Нет колонки отклонения для графика просрочки.")
         return
     dev_num = pd.to_numeric(tbl[dev_c], errors="coerce").fillna(0.0)
-    # Новая формула отклонения: положительное значение = просрочка.
-    tbl["_dev_n"] = dev_num.clip(lower=0.0)
+    # По ТЗ просрочка — отрицательное отклонение; величина просрочки = |min(0, dev)|.
+    tbl["_dev_n"] = (-dev_num).clip(lower=0.0)
     tbl["_sec_key"] = _rd_delay_detail_section_keys(tbl)
     by_section = str(view_mode or "").strip().casefold() == "по разделу"
     if by_section:
@@ -20367,7 +20372,8 @@ def _rd_plan_fallback_view(
                     "—"
                 ),
                 "Прогноз/Факт выдачи": df["_fact_dt"].dt.strftime("%d.%m.%Y").fillna("—"),
-                "Отклонение, дн.": (df["_fact_dt"] - df["_plan_dt"]).dt.days,
+                # По ТЗ просрочка отрицательная: дата по договору − прогноз/факт.
+                "Отклонение, дн.": (df["_plan_dt"] - df["_fact_dt"]).dt.days,
                 _status_label: (
                     _rd_plan_status_display_series(df[status_col]).fillna("").astype(str)
                     if status_col and status_col in df.columns
@@ -20381,8 +20387,8 @@ def _rd_plan_fallback_view(
 
         total_sections = int(len(detail_rows))
         delta_num = pd.to_numeric(detail_rows["Отклонение, дн."], errors="coerce")
-        overdue = int((delta_num > 0).sum())
-        avg_delay = float(delta_num[delta_num > 0].mean()) if overdue > 0 else 0.0
+        overdue = int((delta_num < 0).sum())
+        avg_delay = float(delta_num[delta_num < 0].abs().mean()) if overdue > 0 else 0.0
 
     try:
         full_cipher_fb = _pick(["Шифр полный", "InternalID", "Internal Id", "internalid"])
@@ -20425,7 +20431,7 @@ def _rd_plan_fallback_view(
 
     m1, m2, m3 = st.columns(3, gap="small")
     m1.metric("Всего разделов", f"{total_sections}")
-    m2.metric("С отклонением (дн. > 0)", f"{overdue}")
+    m2.metric("С отклонением (дн. < 0)", f"{overdue}")
     m3.metric("Ср. задержка, дн.", f"{avg_delay:.1f}" if overdue > 0 else "0")
 
     _pie_sec_allow: set[str] | None = _sec_allow
@@ -21010,7 +21016,8 @@ def _rd_plan_fallback_view(
                 days_column="Отклонение от даты по договору",
                 extra_days_columns=("Отклонение от прогнозной даты",),
                 days_deviation_gradient=True,
-                days_positive_is_ahead=False,
+                # ТЗ: < 0 — красный (с «−»), ≥ 0 — зелёный.
+                days_positive_is_ahead=True,
             ),
             detail_show,
             file_stem="rd_fb_detail",
@@ -22395,7 +22402,8 @@ def dashboard_rd_delay(df, is_pd: bool = False):
                             days_column="Отклонение от даты по договору",
                             extra_days_columns=("Отклонение от прогнозной даты",),
                             days_deviation_gradient=True,
-                            days_positive_is_ahead=False,
+                            # ТЗ: < 0 — красный (с «−»), ≥ 0 — зелёный.
+                            days_positive_is_ahead=True,
                         ),
                         _tessa_detail_table,
                         file_stem="rd_delay_tessa_detail",
@@ -22533,11 +22541,17 @@ def dashboard_rd_delay(df, is_pd: bool = False):
             detail_df["_detail_actual_issue_date"].notna(),
             detail_df["_detail_plan_date"],
         )
+        # ТЗ: числитель = дата выдачи в производство работ; не выдан → сегодня.
+        # Знак: дата − (факт|сегодня) → просрочка отрицательная (красная с «−»).
+        _rd_today = pd.Timestamp.now().normalize()
+        _rd_base = detail_df["_detail_production_issue_date"].where(
+            detail_df["_detail_production_issue_date"].notna(), _rd_today
+        )
         detail_df["_detail_delta_vs_contract"] = (
-            detail_df["_detail_plan_date"] - detail_df["_detail_production_issue_date"]
+            detail_df["_detail_plan_date"] - _rd_base
         ).dt.days
         detail_df["_detail_delta_vs_forecast"] = (
-            detail_df["_detail_plan_date"] - detail_df["_detail_forecast_date"]
+            detail_df["_detail_forecast_date"] - _rd_base
         ).dt.days
 
         def _fmt_date_or_blank(series: pd.Series) -> pd.Series:
@@ -45531,7 +45545,12 @@ def _rd_delay_detail_section_keys(tbl: pd.DataFrame) -> pd.Series:
 
 
 def _rd_delay_section_overdue_kpis(detail_tbl: pd.DataFrame) -> tuple[int, float]:
-    """Просрочка по разделам плана: max(отклонение) по карточкам TESSA на раздел."""
+    """Просрочка по разделам плана: считаем построчно по детальной таблице
+    (1 строка = 1 раздел плана), чтобы KPI «С отклонением» совпадал с числом
+    строк выгрузки при фильтре «Отклонение от даты по договору < 0» (по ТЗ
+    просрочка отрицательная). Раньше строки дополнительно схлопывались по
+    (проект, шифр, наименование), из-за чего дашборд (115) не сходился с
+    выгрузкой (122)."""
     if detail_tbl is None or getattr(detail_tbl, "empty", True):
         return 0, 0.0
     dev_c = "Отклонение от даты по договору, дн"
@@ -45542,16 +45561,12 @@ def _rd_delay_section_overdue_kpis(detail_tbl: pd.DataFrame) -> tuple[int, float
     tbl = _drop_rd_detail_empty_rows(detail_tbl.copy())
     if tbl.empty:
         return 0, 0.0
-    tbl["_sec_key"] = _rd_delay_detail_section_keys(tbl)
-    dev = pd.to_numeric(tbl[dev_c], errors="coerce").fillna(0.0)
-    # Новая формула отклонения: положительное значение = просрочка.
-    overdue_dev = dev.clip(lower=0.0)
-    sec = tbl.assign(_dev_pos=overdue_dev).groupby("_sec_key", as_index=False).agg(
-        _dev_max=("_dev_pos", "max")
-    )
-    ovd = sec[sec["_dev_max"] > 0]
+    dev = pd.to_numeric(tbl[dev_c], errors="coerce")
+    # По ТЗ просрочка — отрицательное значение; NaN («—») в KPI не считаем.
+    ovd = dev[dev < 0]
     overdue = int(len(ovd))
-    avg_delay = float(ovd["_dev_max"].mean()) if overdue > 0 else 0.0
+    # Средняя задержка — в положительных днях (модуль отклонения).
+    avg_delay = float(ovd.abs().mean()) if overdue > 0 else 0.0
     return overdue, avg_delay
 
 
