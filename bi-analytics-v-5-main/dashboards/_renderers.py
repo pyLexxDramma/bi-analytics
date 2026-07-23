@@ -33083,8 +33083,14 @@ def _pd_section_masks(df: pd.DataFrame) -> dict:
 
 def _pd_delay_row_mask(df: pd.DataFrame, masks: dict) -> pd.Series:
     """
-    Просрочка ПД: разделы в ветке «Этап … Проектная документация» (ур.4 структуры
-    или ур.5 «Раздел …»), с шифром ПД. Без подзадач ур.5+ (Вентиляция, Кровля и т.п.).
+    Просрочка ПД: разделы этапа «Проектная документация» (ур.4 структуры или
+    ур.5 «Раздел …»), с шифром ПД. Без подзадач ур.5+ (Вентиляция, Кровля и т.п.).
+
+    По ТЗ вкладки «Просрочка выдачи ПД» — ТОЛЬКО основной этап «Проектная
+    документация» (непосредственный родитель), без Корректировки / Согласования /
+    Экспертизы. Иначе крайнее «Базовое окончание» по проекту уезжает на срок
+    корректировки (напр. Дмитровский: 30.06.2026 вместо 30.03.2025), а зелёная
+    полоса (досрочно закрыто) пропадает, т.к. корректировка ещё не 100%.
     """
     empty = pd.Series(False, index=df.index)
     hier_col = masks.get("hier_col")
@@ -33106,34 +33112,42 @@ def _pd_delay_row_mask(df: pd.DataFrame, masks: dict) -> pd.Series:
         "раздел", case=False, na=False
     )
 
-    # ТЗ: все разделы ПД ур.4 структуры (metrics) в ветке ПД — все этапы, не только 1-й.
+    # Базовая маска разделов ПД (в ветке ПД, все этапы) — приоритет вариантов.
     m_all_l4 = m_met & anc_m & cipher_m & razdel_m
-    if m_all_l4.any():
-        return m_all_l4
-
-    # Ур.5 «Раздел …» под этапом ПД — fallback, если в выгрузке нет ур.4.
     m_dyn_sec = dyn & anc_m & cipher_m & razdel_m
-    if m_dyn_sec.any():
-        return m_dyn_sec
+    base = empty
+    if m_all_l4.any():
+        base = m_all_l4
+    elif m_dyn_sec.any():
+        base = m_dyn_sec
+    else:
+        if outline_col and outline_col in df.columns:
+            lv_s = outline_level_numeric(df[outline_col])
+            parent_names0 = _pd_msp_immediate_parent_names(df, hier_col, name_col)
+            parent_pd0 = parent_names0.map(_pd_msp_parent_is_pd_stage).fillna(False)
+            m_l4 = lv_s.eq(4) & parent_pd0 & cipher_m & razdel_m & ~dyn
+            if m_l4.any():
+                base = m_l4
+        if not base.any():
+            m_fallback = m_met & anc_m & cipher_m & razdel_m & ~dyn
+            base = m_fallback if m_fallback.any() else (m_met & anc_m & cipher_m & ~dyn)
 
-    # Ур.4 структуры под этапом ПД (узкий fallback).
-    if outline_col and outline_col in df.columns:
-        lv_s = outline_level_numeric(df[outline_col])
-        parent_names = _pd_msp_immediate_parent_names(df, hier_col, name_col)
-        parent_pd = parent_names.map(_pd_msp_parent_is_pd_stage).fillna(False)
-        m_l4 = lv_s.eq(4) & parent_pd & cipher_m & razdel_m & ~dyn
-        if m_l4.any():
-            return m_l4
-
-    m_fallback = m_met & anc_m & cipher_m & razdel_m & ~dyn
-    if m_fallback.any():
-        return m_fallback
-
-    return m_met & anc_m & cipher_m & ~dyn
+    # Сузить до основного этапа «Проектная документация» (непосредственный
+    # родитель), исключая Корректировку/Согласование/Экспертизу.
+    parent_names = _pd_msp_immediate_parent_names(df, hier_col, name_col)
+    parent_pd_stage = parent_names.map(_pd_msp_parent_is_pd_stage).fillna(False)
+    scoped = base & parent_pd_stage
+    if scoped.any():
+        return scoped
+    return base
 
 
 def _pd_delay_chart_source_mask(df: pd.DataFrame, masks: dict) -> pd.Series:
-    """Все задачи ПД с шифром (ур.≥5) — для min/max дат по разделу/проекту на графике."""
+    """Задачи этапа «Проектная документация» с шифром (ур.≥5) — min/max дат на графике.
+
+    Как и `_pd_delay_row_mask`, ограничиваем основным этапом (без Корректировки/
+    Согласования/Экспертизы), чтобы диапазон дат совпадал с полосами по проекту.
+    """
     empty = pd.Series(False, index=df.index)
     hier_col = masks.get("hier_col")
     name_col = masks.get("name_col")
@@ -33148,8 +33162,15 @@ def _pd_delay_chart_source_mask(df: pd.DataFrame, masks: dict) -> pd.Series:
     cipher_m = cipher_ok.fillna(False)
     if level_col and level_col in df.columns:
         lv = pd.to_numeric(df[level_col], errors="coerce")
-        return anc & cipher_m & lv.ge(5)
-    return anc & cipher_m
+        base = anc & cipher_m & lv.ge(5)
+    else:
+        base = anc & cipher_m
+    parent_names = _pd_msp_immediate_parent_names(df, hier_col, name_col)
+    parent_pd_stage = parent_names.map(_pd_msp_parent_is_pd_stage).fillna(False)
+    scoped = base & parent_pd_stage
+    if scoped.any():
+        return scoped
+    return base
 
 
 def _pd_clamp_chart_dates(s: pd.Series, ts_report: pd.Timestamp) -> pd.Series:
@@ -37323,11 +37344,28 @@ def dashboard_documentation(
                         )
                     else:
                         _tn_tbl = df[name_col].astype(str) if name_col in df.columns else pd.Series("", index=df.index)
-                        sec_disp = (
-                            df.loc[idx_sec, cipher_col].astype(str).str.strip()
-                            if cipher_col and cipher_col in df.columns
-                            else _tn_tbl.loc[idx_sec].astype(str)
-                        )
+                        # Ярлык «Раздел» = шифр. Строки без шифра (процессные задачи
+                        # «Согласование…», «Экспертиза…», «Разрешение…», «Корректировка
+                        # АГО» и т.п.) — не разделы ПД: убираем, иначе они дают пустой
+                        # «Раздел» и схлопываются дедупом (Проект, Раздел) в одну
+                        # пустую строку на проект. Arrow-NA str не ловится .isin —
+                        # поэтому определяем пустоту через .isna() + строковый набор.
+                        _blank_lbl = {"", "nan", "none", "<na>", "nat", "null", "-", "—"}
+                        if cipher_col and cipher_col in df.columns:
+                            _raw_cipher = df.loc[idx_sec, cipher_col]
+                            sec_disp = _raw_cipher.astype(str).str.strip()
+                            _sec_blank = (
+                                _raw_cipher.isna().to_numpy()
+                                | sec_disp.str.strip().str.lower().isin(_blank_lbl).to_numpy()
+                            )
+                        else:
+                            sec_disp = _tn_tbl.loc[idx_sec].astype(str).str.strip()
+                            _sec_blank = (
+                                sec_disp.str.strip().str.lower().isin(_blank_lbl).to_numpy()
+                            )
+                        _sec_keep = ~_sec_blank
+                        idx_sec = idx_sec[_sec_keep]
+                        sec_disp = sec_disp[_sec_keep]
                         tbl_raw = pd.DataFrame({"Раздел": sec_disp.values}, index=idx_sec)
                         _proj_src = (
                             project_col
