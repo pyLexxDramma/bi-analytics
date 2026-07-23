@@ -38244,6 +38244,14 @@ def _approved_budget_get_monthly_slice(
     if sub is None or sub.empty:
         return None, ""
 
+    # Синтетический БДДС хранит «сырые» имена проектов (напр. «Дмитровский-1»),
+    # тогда как approved-budget уже канонизирован («Дмитровский»). Приводим срез к
+    # каноническим подписям, чтобы группировка и фильтр по одному проекту совпадали
+    # с таблицей «Все проекты» (иначе фильтр по «Дмитровский» не находил «Дмитровский-1»
+    # и падал в другой источник данных с иными суммами).
+    if "project name" in sub.columns:
+        sub = _project_column_apply_canonical(sub, "project name")
+
     if selected_project and selected_project != "Все" and "project name" in sub.columns:
         sub = sub[
             sub["project name"].map(_project_filter_norm_key)
