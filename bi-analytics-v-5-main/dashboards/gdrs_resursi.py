@@ -3538,6 +3538,43 @@ def gdrs_matrix_week_count(
     return len(gdrs_week_numbers_in_period(date_from, date_to))
 
 
+def gdrs_week_numbers_with_fact(
+    long_fact: pd.DataFrame,
+    *,
+    vid: str,
+    date_from: Optional[pd.Timestamp],
+    date_to: Optional[pd.Timestamp],
+    projects: Optional[list[str]] = None,
+    contractors: Optional[list[str]] = None,
+) -> list[int]:
+    """Номера недель 1..N (из периода), в которых реально есть даты факта СКУД.
+
+    Нужно, чтобы фильтр «N неделя» не предлагал недели без факта: напр. неполный
+    месяц (факт до 21-го) — недели 4–5 (дни 22–31) пусты, и выбор «4 неделя» даёт
+    пустые диаграмму/таблицу. Здесь оставляем только недели, где есть хотя бы один
+    день факта в выбранном периоде.
+    """
+    period_weeks = gdrs_week_numbers_in_period(date_from, date_to)
+    if not period_weeks:
+        return []
+    fact = _filter_fact_slice(
+        long_fact,
+        vid=vid,
+        date_from=date_from,
+        date_to=date_to,
+        projects=projects,
+        contractors=contractors,
+    )
+    if fact is None or fact.empty or "date" not in fact.columns:
+        return []
+    dates = pd.to_datetime(fact["date"], errors="coerce").dropna()
+    if dates.empty:
+        return []
+    week_idx, _ = _gdrs_week_groups(dates, date_from=date_from, date_to=date_to)
+    present = {int(w) for w in week_idx.unique() if int(w) >= 1}
+    return [wn for wn in period_weeks if wn in present]
+
+
 GDRS_AGG_MONTH = "month_avg"
 GDRS_AGG_LABELS: dict[str, str] = {
     GDRS_AGG_MONTH: "Среднее за месяц",
@@ -3552,6 +3589,18 @@ GDRS_AGG_LABELS: dict[str, str] = {
 
 def gdrs_agg_select_options() -> list[str]:
     return list(GDRS_AGG_LABELS.values())
+
+
+def gdrs_agg_select_options_for_weeks(weeks: Optional[Iterable[int]]) -> list[str]:
+    """Опции агрегации «Среднее за месяц» + только недели из ``weeks``.
+
+    Если ``weeks`` пуст/``None`` — вернуть только «Среднее за месяц» (недель с
+    фактом нет, предлагать «N неделя» бессмысленно).
+    """
+    opts = [GDRS_AGG_LABELS[GDRS_AGG_MONTH]]
+    for wn in sorted({int(w) for w in (weeks or []) if 1 <= int(w) <= 6}):
+        opts.append(GDRS_AGG_LABELS[f"week:{wn}"])
+    return opts
 
 
 def gdrs_agg_label_to_key(label: str) -> str:
@@ -4012,6 +4061,14 @@ def gdrs_matrix_week_labels(
     week_idx, _ = (
         _gdrs_week_groups(dts, date_from=lo, date_to=hi) if not dts.empty else (None, {})
     )
+    # Если есть факт — оставляем только недели с фактом (пустые календарные
+    # недели неполного месяца не показываем, чтобы шапка совпадала с колонками
+    # таблицы). Без факта — прежнее поведение (все недели периода).
+    if week_idx is not None and not dts.empty:
+        weeks_with_fact = {int(w) for w in week_idx.unique() if int(w) >= 1}
+        _wn = [wi for wi in week_nums if wi in weeks_with_fact]
+        if _wn:
+            week_nums = _wn
     labels: list[str] = []
     for wi in week_nums:
         if week_idx is not None and not dts.empty:
@@ -4513,6 +4570,15 @@ def build_main_table(
     _week_nums = (
         gdrs_week_numbers_in_period(date_from, date_to) if _show_week_cols else []
     )
+    # Только недели, где реально есть факт СКУД. Неполный месяц (факт до 21-го):
+    # календарные недели 4–5 (дни 22–31) пусты, и если считать «Среднее за месяц»
+    # как среднее по 5 неделям, СКУД делится на 5 вместо 3 (занижение факта и
+    # раздувание отклонения). Пустые недели не показываем и в среднее не берём.
+    if _week_nums and fact is not None and not fact.empty and "week" in fact.columns:
+        _weeks_with_fact = {int(w) for w in fact["week"].dropna().unique() if int(w) >= 1}
+        _restricted = [wn for wn in _week_nums if wn in _weeks_with_fact]
+        if _restricted:
+            _week_nums = _restricted
     _weekly_plan_lu: dict[int, tuple] = {}
     if _show_week_cols and weekly_plan_by_week:
         for _wn, _wp_df in weekly_plan_by_week.items():

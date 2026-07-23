@@ -28422,6 +28422,8 @@ def dashboard_gdrs(df, vid_locked: str | None = None, *, theme: str | None = Non
         gdrs_agg_week_num,
         GDRS_AGG_LABELS,
         gdrs_agg_select_options,
+        gdrs_agg_select_options_for_weeks,
+        gdrs_week_numbers_with_fact,
         gdrs_filter_fact_by_months,
         gdrs_filter_fact_resursi_source_for_periods,
         gdrs_matrix_show_week_columns,
@@ -28574,6 +28576,30 @@ def dashboard_gdrs(df, vid_locked: str | None = None, *, theme: str | None = Non
                     placeholder="Все месяцы",
                     help="Один или несколько календарных месяцев. Пусто — все месяцы с данными.",
                 )
+            # Опции недель — только те, где реально есть факт СКУД в выбранном
+            # периоде. Иначе «N неделя» без факта (неполный месяц: факт до 21-го →
+            # недели 4–5 пусты) даёт пустые диаграмму и таблицу.
+            _wk_periods, _ = gdrs_resolve_month_periods(_month_options, sel_month_labels)
+            _wk_from, _wk_to = gdrs_months_date_range(_wk_periods)
+            _wk_from = _pd.to_datetime(_wk_from)
+            _wk_to = _pd.to_datetime(_wk_to)
+            _wk_fact = gdrs_filter_fact_by_months(long_fact, _wk_periods)
+            _wk_fact = gdrs_filter_fact_resursi_source_for_periods(_wk_fact, _wk_periods)
+            _weeks_with_fact = gdrs_week_numbers_with_fact(
+                _wk_fact,
+                vid=sel_vid,
+                date_from=_wk_from,
+                date_to=_wk_to,
+                projects=sel_projects or None,
+                contractors=sel_contractors or None,
+            )
+            _agg_opts = gdrs_agg_select_options_for_weeks(_weeks_with_fact)
+            for _agg_key in (
+                f"gdrs_filter_plan_agg_{_gdrs_key_suffix}",
+                f"gdrs_filter_skud_agg_{_gdrs_key_suffix}",
+            ):
+                if st.session_state.get(_agg_key) not in _agg_opts:
+                    st.session_state.pop(_agg_key, None)
             with _plan_col:
                 _plan_lbl = st.selectbox(
                     "План",
