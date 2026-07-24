@@ -5697,7 +5697,7 @@ def _deviations_msp_gantt_style_block_meta(
                 block_res = section_res
     if not _block_vals:
         return None, []
-    return block_res, _block_vals
+    return block_res, _gantt_dedupe_block_filter_values(_block_vals)
 
 
 def _deviations_msp_gantt_style_building_col(d: pd.DataFrame) -> Optional[str]:
@@ -6004,9 +6004,7 @@ def _deviations_apply_block_building_filters(
     if use_msp_block or (msp_bld_col and msp_bld_col in filtered_df.columns):
         out = filtered_df.copy()
         if use_msp_block and selected_block != "Все":
-            out = out[
-                out[msp_blk_col].astype(str).str.strip() == str(selected_block).strip()
-            ].copy()
+            out = out[_gantt_block_series_eq_selected(out[msp_blk_col], selected_block)].copy()
         if selected_building != "Все":
             if use_hierarchy and _deviations_l3_building_option_labels(
                 out, level_col, task_col
@@ -6052,10 +6050,7 @@ def _deviations_apply_block_building_filters(
             building_outline_level=_bdv,
         )
         if selected_block != "Все":
-            wh = wh[
-                wh["_dt_lvl2_key"].astype(str).str.strip()
-                == str(selected_block).strip()
-            ]
+            wh = wh[_gantt_block_series_eq_selected(wh["_dt_lvl2_key"], selected_block)]
         if selected_building != "Все":
             if _deviations_l3_building_option_labels(wh, level_col, task_col):
                 sub = _deviations_filter_df_under_l3_building(
@@ -6082,17 +6077,15 @@ def _deviations_apply_block_building_filters(
                 parts = sb.split(_DEVIATIONS_FLAT_FB_SEP, 1)
                 if len(parts) == 2:
                     blk, sec = parts[0].strip(), parts[1].strip()
-                    out = out[out["block"].astype(str).str.strip() == blk]
+                    out = out[_gantt_block_series_eq_selected(out["block"], blk)]
                     out = out[out["section"].astype(str).str.strip() == sec]
             elif "block" in out.columns:
-                out = out[out["block"].astype(str).str.strip() == sb]
+                out = out[_gantt_block_series_eq_selected(out["block"], sb)]
         if selected_building != "Все":
             out = out[out[task_col].astype(str).str.strip() == str(selected_building).strip()]
         return out
     if selected_block != "Все" and "block" in out.columns:
-        out = out[
-            out["block"].astype(str).str.strip() == str(selected_block).strip()
-        ]
+        out = out[_gantt_block_series_eq_selected(out["block"], selected_block)]
     if (
         selected_building != "Все"
         and building_col
@@ -6212,19 +6205,48 @@ def _gantt_block_cmp_key(v) -> str:
     return t
 
 
+def _gantt_block_stem_key(v) -> str:
+    """Как `_gantt_block_cmp_key`, но с лёгким стеммингом мн./ед. числа (тендеры → тендер)."""
+    k = _gantt_block_cmp_key(v)
+    if len(k) > 4 and not k.endswith(")") and k[-1] in ("y", "i"):
+        return k[:-1]
+    return k
+
+
+def _gantt_block_series_eq_selected(series: pd.Series, selected) -> pd.Series:
+    """Маска строк, чьё значение блока совпадает с `selected` без учёта регистра/числа
+    (совместимо с дедупом опций «Функциональный блок»: Тендер ↔ ТЕНДЕРЫ)."""
+    sel_key = _gantt_block_stem_key(selected)
+    if not sel_key:
+        return pd.Series(True, index=series.index)
+    return series.astype(str).str.strip().map(_gantt_block_stem_key) == sel_key
+
+
+def _gantt_prefer_block_label(candidate: str, current: str) -> bool:
+    """True, если `candidate` лучше подходит для отображения, чем уже выбранный `current`."""
+    c_upper = candidate.isupper()
+    cur_upper = current.isupper()
+    if c_upper != cur_upper:
+        return not c_upper
+    return len(candidate) < len(current)
+
+
 def _gantt_dedupe_block_filter_values(values: list[str]) -> list[str]:
-    """Уникальные подписи блока без дублей «Блок B» + «Блок B (… м2)»."""
-    normed: list[str] = []
-    seen: set[str] = set()
+    """Уникальные подписи блока без дублей «Блок B» + «Блок B (… м2)» и без
+    дублей по регистру/числу («ТЕНДЕРЫ» / «Тендер», «ФИНАНСЫ» / «Финансы»)."""
+    order: list[str] = []
+    canon: dict[str, str] = {}
     for v in values or []:
         n = _gantt_norm_block_label(v)
         if not n or n.lower() in ("nan", "none"):
             continue
-        key = _gantt_block_cmp_key(n)
-        if key in seen:
-            continue
-        seen.add(key)
-        normed.append(n)
+        key = _gantt_block_stem_key(n)
+        if key not in canon:
+            canon[key] = n
+            order.append(key)
+        elif _gantt_prefer_block_label(n, canon[key]):
+            canon[key] = n
+    normed = [canon[k] for k in order]
     drop: set[str] = set()
     for a in normed:
         a_ck = _gantt_block_cmp_key(a)
@@ -6615,12 +6637,8 @@ def _deviations_render_building_selectbox(
     state_key: str,
     label: str = "Строение",
 ) -> None:
-    """Селект «Строение»; при пустом списке — подпись, без лишних пунктов."""
+    """Селект «Строение»; при пустом списке — всё равно «Все» (колонка не пропадает)."""
     opts = [x for x in (options or []) if str(x).strip()]
-    if not opts:
-        st.session_state[state_key] = "Все"
-        suppress_caption("Нет строения")
-        return
     full = ["Все"] + opts
     cur = st.session_state.get(state_key, "Все")
     if cur not in full:
@@ -6769,7 +6787,8 @@ def _deviations_render_period_calendar(
     """Календарь диапазона дат для фильтра «Период» (как на БДДС)."""
     min_d, max_d = _deviations_period_calendar_bounds(df)
     if min_d is None or max_d is None:
-        suppress_caption("Нет дат для фильтра периода")
+        # Колонка «Период» не должна пропадать из сетки фильтров.
+        st.selectbox("Период", ["Все"], key=f"{range_key}__empty_placeholder")
         return None, None
     if month_key:
         _deviations_migrate_month_list_to_date_range(
@@ -7192,12 +7211,9 @@ def _render_deviations_combined_shared_filters(df):
                 msp_blk_col_dc, msp_blk_vals_dc = _deviations_msp_gantt_style_block_meta(
                     df_opts
                 )
+                block_opts = ["Все"]
                 if msp_blk_vals_dc and msp_blk_col_dc:
-                    st.selectbox(
-                        "Функциональный блок",
-                        ["Все"] + msp_blk_vals_dc,
-                        key="devcombo_block",
-                    )
+                    block_opts = ["Все"] + list(msp_blk_vals_dc)
                 elif use_hierarchy:
                     _ln_opts = _dev_outline_level_numeric(df_opts[level_col])
                     _blv, _bdv = _deviations_msp_tier_levels(_ln_opts)
@@ -7218,7 +7234,7 @@ def _render_deviations_combined_shared_filters(df):
                         .tolist()
                     )
                     _raw_l2 = [x for x in _raw_l2 if x and not _is_generic_block_name(x)]
-                    block_opts = ["Все"] + sorted(_raw_l2)
+                    block_opts = ["Все"] + _gantt_dedupe_block_filter_values(_raw_l2)
                     if len(block_opts) <= 1 and "_dt_lvl2_key" in wh.columns:
                         _k2c = wh["_dt_lvl2_key"].astype(str).str.strip()
                         _k2c = _k2c[_k2c.ne("") & _k2c.str.lower().ne("nan")]
@@ -7228,31 +7244,37 @@ def _render_deviations_combined_shared_filters(df):
                                 for x in pd.unique(_k2c).tolist()
                                 if not _is_generic_block_name(x)
                             ]
-                            block_opts = ["Все"] + sorted(_k2c_list)
-                    st.selectbox(
-                        "Функциональный блок",
-                        block_opts,
-                        key="devcombo_block",
-                    )
+                            block_opts = ["Все"] + _gantt_dedupe_block_filter_values(
+                                _k2c_list
+                            )
                 elif use_flat_bs:
                     fb_opts = _deviations_flat_functional_block_options(df_opts)
                     fb_opts = [
                         x for x in fb_opts if x == "Все" or not _is_generic_block_name(x)
                     ]
-                    st.selectbox(
-                        "Функциональный блок",
-                        fb_opts,
-                        key="devcombo_block",
+                    block_opts = ["Все"] + _gantt_dedupe_block_filter_values(
+                        [x for x in fb_opts if x != "Все"]
                     )
                 elif "block" in df.columns:
                     blocks_raw = sorted(
                         df["block"].dropna().astype(str).str.strip().unique().tolist()
                     )
                     blocks_raw = [x for x in blocks_raw if not _is_generic_block_name(x)]
-                    blocks = ["Все"] + blocks_raw
-                    st.selectbox("Функциональный блок", blocks, key="devcombo_block")
-                else:
-                    suppress_caption("Нет колонки блока")
+                    block_opts = ["Все"] + _gantt_dedupe_block_filter_values(blocks_raw)
+                _cur_block = str(
+                    st.session_state.get("devcombo_block", "Все") or "Все"
+                ).strip()
+                if _cur_block not in block_opts:
+                    st.session_state["devcombo_block"] = "Все"
+                # Явный контейнер + короткая подпись: длинный label в 5 колонках
+                # иногда схлопывал BaseWeb-select до «пустого» зазора (Есипово-5).
+                with st.container(key="devcombo_block_wrap"):
+                    st.selectbox(
+                        "Блок",
+                        block_opts,
+                        key="devcombo_block",
+                        help="Функциональный блок",
+                    )
             with col3:
                 _snap_bld = st.session_state.get("project_data_all_snapshots")
                 _df_bld = (

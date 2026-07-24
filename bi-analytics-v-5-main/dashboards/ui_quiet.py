@@ -22,13 +22,60 @@ def suppress_caption(*_args, **_kwargs) -> None:
 
 # --- Единый блок фильтров ---------------------------------------------------------
 
-_SESSION_CSS_FLAG_KEY = "_bi_unified_filters_css_v11"
+_SESSION_CSS_FLAG_KEY = "_bi_unified_filters_css_v12"
 _DEFAULT_FIELD_MIN_PX = 260
 
 UNIFIED_FILTERS_CSS = """
 <style>
 [data-testid="stMain"] .bi-filters-scope {
     --bi-filter-rhythm: 8px;
+}
+/* Не схлопывать selectbox в узкой 5-колоночной строке (Есипово и др.) */
+.bi-filters-selectors [data-testid="stSelectbox"],
+.bi-filters-scope [data-testid="stSelectbox"],
+.bi-filters-selectors [data-testid="stDateInput"],
+.bi-filters-scope [data-testid="stDateInput"] {
+    min-width: 0 !important;
+    min-height: 4.25rem !important;
+    overflow: visible !important;
+    opacity: 1 !important;
+    visibility: visible !important;
+}
+.bi-filters-selectors [data-testid="stSelectbox"] [data-baseweb="select"],
+.bi-filters-scope [data-testid="stSelectbox"] [data-baseweb="select"],
+.bi-filters-selectors [data-testid="stSelectbox"] [data-baseweb="select"] > div,
+.bi-filters-scope [data-testid="stSelectbox"] [data-baseweb="select"] > div {
+    min-height: 2.4rem !important;
+    width: 100% !important;
+    max-width: 100% !important;
+    opacity: 1 !important;
+    visibility: visible !important;
+}
+.bi-filters-selectors [data-testid="stWidgetLabel"],
+.bi-filters-scope [data-testid="stWidgetLabel"] {
+    display: block !important;
+    visibility: visible !important;
+    opacity: 1 !important;
+    overflow: visible !important;
+    white-space: normal !important;
+    line-height: 1.25 !important;
+    margin-bottom: 0.15rem !important;
+}
+/* Явный wrap селекта «Блок» в «Причины отклонений» */
+div[class*="st-key-devcombo_block_wrap"],
+div[class*="st-key-devcombo_block"] {
+    min-width: 0 !important;
+    width: 100% !important;
+    overflow: visible !important;
+}
+div[class*="st-key-devcombo_block_wrap"] [data-testid="stSelectbox"],
+div[class*="st-key-devcombo_block"] [data-baseweb="select"],
+div[class*="st-key-devcombo_block"] [data-baseweb="select"] > div {
+    display: block !important;
+    width: 100% !important;
+    min-height: 2.4rem !important;
+    opacity: 1 !important;
+    visibility: visible !important;
 }
 /* Popover: равные колонки с ограничением ширины поля */
 [data-testid="stMain"] [data-testid="stPopoverBody"] div[data-testid="stHorizontalBlock"] > div[data-testid="column"],
