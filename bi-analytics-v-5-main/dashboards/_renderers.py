@@ -9812,6 +9812,120 @@ def render_plan_fact_dates_metric_plates(
     st.markdown("".join(parts), unsafe_allow_html=True)
 
 
+def _plan_fact_parent_is_rd_stage(parent_name: str) -> bool:
+    """Родитель ур.4 — этап «Рабочая документация» (и специализированные РД-этапы)."""
+    s = str(parent_name or "").casefold().replace("ё", "е")
+    if "рабоч" not in s or "документ" not in s:
+        return False
+    if "корректиров" in s:
+        return False
+    # Чистая ПД без РД — не берём; «проектная и рабочая…» оставляем (есть «рабоч»).
+    if "проектная документация" in s and "рабоч" not in s:
+        return False
+    return True
+
+
+def _plan_fact_rd_l5_sections_mask(df: pd.DataFrame) -> pd.Series:
+    """Ур.5 с шифром ПД/РД под непосредственным родителем «Рабочая документация»."""
+    empty = pd.Series(False, index=df.index if df is not None else None)
+    if df is None or getattr(df, "empty", True):
+        return empty
+    hier_col, _outline_col, level_col, name_col, _block_col = _pd_msp_hierarchy_cols(df)
+    stack_col = hier_col or level_col
+    if not stack_col or stack_col not in df.columns or not name_col or name_col not in df.columns:
+        return empty
+    _cipher_col, cipher_ok = _pd_cipher_filled_mask(df)
+    lv_col = level_col if level_col and level_col in df.columns else stack_col
+    lv = pd.to_numeric(df[lv_col], errors="coerce")
+    parent_names = _pd_msp_immediate_parent_names(df, stack_col, name_col)
+    parent_rd = parent_names.map(_plan_fact_parent_is_rd_stage).fillna(False)
+    return lv.eq(5) & cipher_ok.fillna(False) & parent_rd
+
+
+def _plan_fact_build_rd_deadline_chart_df(scope_df: pd.DataFrame) -> pd.DataFrame:
+    """
+    Диаграмма «Отклонение от базового плана»: по одной строке на родителя ур.4
+    «Рабочая документация» — max «Базовое окончание» и max «Окончание» среди
+    дочерних разделов ур.5 с заполненным «Шифр ПД РД».
+    """
+    cols = [
+        "task name",
+        "project name",
+        "plan end",
+        "base end",
+        "plan_end_diff",
+        "_rd_parent",
+    ]
+    if scope_df is None or getattr(scope_df, "empty", True):
+        return pd.DataFrame(columns=cols)
+
+    work = scope_df.copy()
+    ensure_msp_hierarchy_columns(work)
+    ensure_date_columns(work)
+    if "plan end" not in work.columns or "base end" not in work.columns:
+        return pd.DataFrame(columns=cols)
+    if "task name" not in work.columns:
+        return pd.DataFrame(columns=cols)
+
+    mask = _plan_fact_rd_l5_sections_mask(work)
+    if not bool(mask.any()):
+        return pd.DataFrame(columns=cols)
+
+    hier_col, _oc, level_col, name_col, _bc = _pd_msp_hierarchy_cols(work)
+    stack_col = hier_col or level_col
+    parents = _pd_msp_immediate_parent_names(work, stack_col, name_col)
+    sub = work.loc[mask].copy()
+    sub["_rd_parent"] = parents.loc[mask].astype(str).str.strip()
+    sub["plan end"] = pd.to_datetime(sub["plan end"], errors="coerce", dayfirst=True)
+    sub["base end"] = pd.to_datetime(sub["base end"], errors="coerce", dayfirst=True)
+    # «НД» и прочий мусор уже → NaT; строки без обеих дат не участвуют.
+    sub = sub[sub["plan end"].notna() | sub["base end"].notna()].copy()
+    if sub.empty:
+        return pd.DataFrame(columns=cols)
+
+    if "project name" not in sub.columns:
+        sub["project name"] = ""
+
+    rows: list[dict] = []
+    group_keys = ["project name", "_rd_parent"]
+    for (proj, parent), g in sub.groupby(group_keys, sort=False, dropna=False):
+        # Даты — max по колонкам (как «по лоту»); подпись — L5 с самым поздним сроком.
+        pe_max = g["plan end"].max()
+        be_max = g["base end"].max()
+        if pd.isna(pe_max) and pd.isna(be_max):
+            continue
+        _deadline = pd.concat([g["plan end"], g["base end"]], axis=1).max(
+            axis=1, skipna=True
+        )
+        if _deadline.notna().any():
+            pick = g.loc[_deadline.idxmax()]
+            label = str(pick.get("task name") or "").strip()
+        else:
+            label = ""
+        if not label:
+            label = str(parent or "").strip() or "Рабочая документация"
+        dev = np.nan
+        if pd.notna(be_max) and pd.notna(pe_max):
+            dev = (pd.Timestamp(be_max) - pd.Timestamp(pe_max)).total_seconds() / 86400.0
+        rows.append(
+            {
+                "task name": label,
+                "project name": str(proj).strip() if pd.notna(proj) else "",
+                "plan end": pe_max,
+                "base end": be_max,
+                "plan_end_diff": dev,
+                "_rd_parent": str(parent or "").strip(),
+            }
+        )
+
+    if not rows:
+        return pd.DataFrame(columns=cols)
+    out = pd.DataFrame(rows)
+    return out.sort_values("plan_end_diff", ascending=True, na_position="last").reset_index(
+        drop=True
+    )
+
+
 # ==================== DASHBOARD 3: Plan/Fact Dates for Tasks ====================
 def dashboard_plan_fact_dates(df):
     if df is None or not hasattr(df, "columns") or df.empty:
@@ -11266,7 +11380,8 @@ def dashboard_plan_fact_dates(df):
             return str(disp).strip()
 
         _PF_GANTT_TASK_FONT = 11
-        _PF_GANTT_WRAP_MAX_LINES = 8
+        # Длинные РД-подписи: 4 строки достаточно; больше — только раздувает высоту.
+        _PF_GANTT_WRAP_MAX_LINES = 4
 
         def _pf_y_label_wrapped(name: str) -> str:
             _w = _gantt_label_wrap_width_chars(task_font=_PF_GANTT_TASK_FONT)
@@ -11280,29 +11395,38 @@ def dashboard_plan_fact_dates(df):
             return _pf_y_label_wrapped(_pf_task_name(row))
 
         def _pf_gantt_chart_height(y_order: list[str]) -> tuple[int, int]:
+            """Высота с учётом реального tick-шрифта (×1.5) и max строк <br>."""
             n_rows_local = max(1, len(y_order))
-            max_lines = max(1, max(len(str(y).split("<br>")) for y in y_order))
-            lh = float(max(13.0, _PF_GANTT_TASK_FONT * 1.42))
-            bars_block = 20.0
-            row_h = int(max(36, max_lines * lh + bars_block))
-            chart_h = max(160, int(n_rows_local * row_h + 20))
+            max_lines = 1
+            if y_order:
+                max_lines = max(
+                    1, max(len(str(y).split("<br>")) for y in y_order)
+                )
+            # Tick font на графике = task_font × 1.5 — иначе многострочные
+            # подписи наезжают друг на друга при «узкой» строке.
+            _eff_font = float(_gantt_task_label_font(_PF_GANTT_TASK_FONT))
+            lh = float(max(18.0, _eff_font * 1.38))
+            bars_block = 28.0  # две полосы + зазор plan/fact
+            pad_between = 12.0
+            row_h = int(max(56, max_lines * lh + bars_block + pad_between))
+            chart_h = max(220, int(_GANTT_MARGINS_V + n_rows_local * row_h))
             return chart_h, max_lines
 
-        def _pf_apply_gantt_y_labels(fig_obj, y_order_local: list[str]) -> int:
-            """Колонка названий — нативные tick-подписи оси Y + automargin (без paper-annotations)."""
+        def _pf_apply_gantt_y_labels(
+            fig_obj, y_order_local: list[str], *, numeric_row_y: bool = False
+        ) -> int:
+            """Колонка названий — нативные tick-подписи оси Y + automargin.
+
+            Для столбчатой диаграммы РД — numeric_row_y=True (равномерный шаг).
+            Не выставляем autorange=\"reversed\": Plotly тогда игнорирует range.
+            """
             left_m, _x0, _ann = _project_schedule_gantt_apply_y_labels(
                 fig_obj,
                 y_order_local,
                 dense=False,
                 task_font=_PF_GANTT_TASK_FONT,
+                numeric_row_y=numeric_row_y,
             )
-            n_local = len(y_order_local)
-            if n_local > 0:
-                # Как раньше: первая строка (наибольшее отклонение) — сверху.
-                fig_obj.update_yaxes(
-                    autorange="reversed",
-                    range=[n_local - 0.5, -0.5],
-                )
             fig_obj.update_xaxes(domain=[float(_x0), 1.0])
             _m = fig_obj.layout.margin
             fig_obj.update_layout(
@@ -11481,12 +11605,13 @@ def dashboard_plan_fact_dates(df):
             _origin_ts = pd.to_datetime(_origin_ms, unit="ms", utc=True).tz_convert(None).normalize()
 
             y_labels: list[str] = []
-            base_len_ms: list[float] = []
-            base_base_ms: list[float] = []
-            cur_len_ms: list[float] = []
-            cur_base_ms: list[float] = []
-            cust_b: list[tuple[str, str]] = []
-            cust_p: list[tuple[str, str]] = []
+            y_idx: list[int] = []
+            base_len_ms: list = []
+            base_base_ms: list = []
+            cur_len_ms: list = []
+            cur_base_ms: list = []
+            cust_b: list[tuple[str, str, str]] = []
+            cust_p: list[tuple[str, str, str]] = []
 
             for r in _bar_rows:
                 y_lbl = r["y"]
@@ -11498,19 +11623,33 @@ def dashboard_plan_fact_dates(df):
                 c_len = max(0.0, float(pe_ms - _origin_ms)) if pe_ms is not None else 0.0
                 if b_len <= 0.0 and c_len <= 0.0:
                     continue
+                _i = len(y_labels)
                 y_labels.append(y_lbl)
-                base_base_ms.append(float(_origin_ms))
-                cur_base_ms.append(float(_origin_ms))
-                base_len_ms.append(b_len)
-                cur_len_ms.append(c_len)
+                y_idx.append(_i)
+                # NaN — нет полосы (нет даты / нулевая длина).
+                if b_len > 0.0:
+                    base_base_ms.append(float(_origin_ms))
+                    base_len_ms.append(b_len)
+                else:
+                    base_base_ms.append(np.nan)
+                    base_len_ms.append(np.nan)
+                if c_len > 0.0:
+                    cur_base_ms.append(float(_origin_ms))
+                    cur_len_ms.append(c_len)
+                else:
+                    cur_base_ms.append(np.nan)
+                    cur_len_ms.append(np.nan)
+                _plain = y_lbl.replace("<br>", " ")
                 cust_b.append(
                     (
+                        _plain,
                         _pf_fmt_day_short(_origin_ts),
                         pd.Timestamp(be).strftime("%d.%m.%Y") if pd.notna(be) else "—",
                     )
                 )
                 cust_p.append(
                     (
+                        _plain,
                         _pf_fmt_day_short(_origin_ts),
                         pd.Timestamp(pe).strftime("%d.%m.%Y") if pd.notna(pe) else "—",
                     )
@@ -11520,28 +11659,59 @@ def dashboard_plan_fact_dates(df):
                 st.info("Нет задач с датами для диаграммы при текущих фильтрах.")
                 return
 
-            y_order = list(y_labels)
+            # Выравниваем число строк <br> — иначе короткие подписи «прыгают»
+            # визуально относительно многострочных при равном шаге оси.
+            _pad_n = max(1, max(len(str(y).split("<br>")) for y in y_labels))
+            y_order = []
+            for _lab in y_labels:
+                _parts = str(_lab).split("<br>")
+                while len(_parts) < _pad_n:
+                    _parts.append("\u00a0")
+                y_order.append("<br>".join(_parts))
             n_rows = len(y_order)
             _chart_h, _max_lines = _pf_gantt_chart_height(y_order)
             _chart_viewport = _PF_GANTT_VIEWPORT
             _x_max_ms = float(_origin_ms)
             for _b0, _bl in zip(base_base_ms, base_len_ms):
-                _x_max_ms = max(_x_max_ms, float(_b0) + float(_bl))
+                if pd.notna(_b0) and pd.notna(_bl):
+                    _x_max_ms = max(_x_max_ms, float(_b0) + float(_bl))
             for _b0, _bl in zip(cur_base_ms, cur_len_ms):
-                _x_max_ms = max(_x_max_ms, float(_b0) + float(_bl))
+                if pd.notna(_b0) and pd.notna(_bl):
+                    _x_max_ms = max(_x_max_ms, float(_b0) + float(_bl))
             _x_pad_ms = 14.0 * 86400000.0
+
+            # Numeric Y + lane offset: равномерный шаг строк (как «График проекта»).
+            _has_fact = any(pd.notna(x) for x in cur_len_ms)
+            _plan_y = [
+                float(i)
+                + _gantt_grouped_bar_lane_offset("plan", has_fact_trace=_has_fact)
+                for i in y_idx
+            ]
+            _fact_y = [
+                float(i)
+                + _gantt_grouped_bar_lane_offset("fact", has_fact_trace=_has_fact)
+                for i in y_idx
+            ]
+            _plan_base_dates = [
+                pd.Timestamp(float(b), unit="ms") if pd.notna(b) else None
+                for b in base_base_ms
+            ]
+            _fact_base_dates = [
+                pd.Timestamp(float(b), unit="ms") if pd.notna(b) else None
+                for b in cur_base_ms
+            ]
 
             fig.add_trace(
                 go.Bar(
                     name="Базовое окончание",
                     orientation="h",
                     x=base_len_ms,
-                    y=y_labels,
-                    base=base_base_ms,
+                    y=_plan_y,
+                    base=_plan_base_dates,
                     width=_PF_GANTT_BAR_WIDTH,
                     marker=dict(color="#14b8a6"),
                     cliponaxis=False,
-                    hovertemplate="%{y}<br>Базовое окончание: %{customdata[1]}<extra></extra>",
+                    hovertemplate="%{customdata[0]}<br>Базовое окончание: %{customdata[2]}<extra></extra>",
                     customdata=cust_b,
                 )
             )
@@ -11550,17 +11720,17 @@ def dashboard_plan_fact_dates(df):
                     name="Окончание",
                     orientation="h",
                     x=cur_len_ms,
-                    y=y_labels,
-                    base=cur_base_ms,
+                    y=_fact_y,
+                    base=_fact_base_dates,
                     width=_PF_GANTT_BAR_WIDTH,
                     marker=dict(color="#fb923c"),
                     cliponaxis=False,
-                    hovertemplate="%{y}<br>Окончание: %{customdata[1]}<extra></extra>",
+                    hovertemplate="%{customdata[0]}<br>Окончание: %{customdata[2]}<extra></extra>",
                     customdata=cust_p,
                 )
             )
             fig.update_layout(
-                barmode="group",
+                barmode="overlay",
                 autosize=True,
                 width=None,
                 yaxis_title=None,
@@ -11569,7 +11739,10 @@ def dashboard_plan_fact_dates(df):
                     type="date",
                     tickformat="%d.%m.%Y",
                     automargin=True,
-                    range=[_origin_ms, _x_max_ms + _x_pad_ms],
+                    range=[
+                        pd.Timestamp(float(_origin_ms), unit="ms"),
+                        pd.Timestamp(float(_x_max_ms + _x_pad_ms), unit="ms"),
+                    ],
                     title=dict(
                         text="Дата (от начала шкалы до окончания)",
                         standoff=22,
@@ -11581,7 +11754,7 @@ def dashboard_plan_fact_dates(df):
                 bargap=0.35,
                 bargroupgap=0.45,
             )
-            _pf_apply_gantt_y_labels(fig, y_order)
+            _pf_apply_gantt_y_labels(fig, y_order, numeric_row_y=True)
             _pf_bar_chart_h = _chart_h
             _pf_bar_chart_viewport = _chart_viewport
 
@@ -11609,7 +11782,11 @@ def dashboard_plan_fact_dates(df):
             caption_below=(
                 "Блок «Ковенанты»: начало и окончание — точками на шкале дат."
                 if is_covenant
-                else "Столбцы от начала шкалы до «Базового окончания» и «Окончания»; сверху — наибольшее отклонение."
+                else (
+                    "Столбцы от начала шкалы до «Базового окончания» и «Окончания» "
+                    "по последнему сроку разделов РД (ур.5 с шифром под «Рабочая документация»); "
+                    "сверху — наибольшее отклонение."
+                )
             ),
         )
         if _pf_bar_chart_h is not None:
@@ -11628,6 +11805,15 @@ def dashboard_plan_fact_dates(df):
             if only_negative_dev_dates:
                 ped = pd.to_numeric(out.get("plan_end_diff"), errors="coerce")
                 out = out.loc[ped.notna() & (ped < 0)].copy()
+            return out
+        # Диаграмма всегда по РД (ур.5 + шифр под «Рабочая документация»),
+        # независимо от «Показать причины отклонений» / детализации.
+        rd_src = _plan_fact_build_rd_deadline_chart_df(_zos_source_df)
+        if rd_src is not None and not rd_src.empty:
+            out = rd_src
+            if only_negative_dev_dates:
+                ped = pd.to_numeric(out.get("plan_end_diff"), errors="coerce")
+                out = out.loc[ped.notna() & (ped < -1e-9)].copy()
             return out
         return filtered_df.copy()
 
