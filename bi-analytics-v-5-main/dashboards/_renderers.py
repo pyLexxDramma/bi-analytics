@@ -11624,12 +11624,15 @@ def dashboard_plan_fact_dates(df):
             _origin_ms = min(_plot_ms)
             _origin_ts = pd.to_datetime(_origin_ms, unit="ms", utc=True).tz_convert(None).normalize()
 
+            _min_bar_ms = 0.5 * 86400000.0  # подпись даты только если полоса видима
             y_labels: list[str] = []
             y_idx: list[int] = []
             base_len_ms: list = []
             base_base_ms: list = []
+            base_txt: list[str] = []
             cur_len_ms: list = []
             cur_base_ms: list = []
+            cur_txt: list[str] = []
             cust_b: list[tuple[str, str, str]] = []
             cust_p: list[tuple[str, str, str]] = []
 
@@ -11650,15 +11653,27 @@ def dashboard_plan_fact_dates(df):
                 if b_len > 0.0:
                     base_base_ms.append(float(_origin_ms))
                     base_len_ms.append(b_len)
+                    base_txt.append(
+                        pd.Timestamp(be).strftime("%d.%m.%Y")
+                        if pd.notna(be) and b_len >= _min_bar_ms
+                        else ""
+                    )
                 else:
                     base_base_ms.append(np.nan)
                     base_len_ms.append(np.nan)
+                    base_txt.append("")
                 if c_len > 0.0:
                     cur_base_ms.append(float(_origin_ms))
                     cur_len_ms.append(c_len)
+                    cur_txt.append(
+                        pd.Timestamp(pe).strftime("%d.%m.%Y")
+                        if pd.notna(pe) and c_len >= _min_bar_ms
+                        else ""
+                    )
                 else:
                     cur_base_ms.append(np.nan)
                     cur_len_ms.append(np.nan)
+                    cur_txt.append("")
                 _plain = y_lbl.replace("<br>", " ")
                 cust_b.append(
                     (
@@ -11698,7 +11713,7 @@ def dashboard_plan_fact_dates(df):
             for _b0, _bl in zip(cur_base_ms, cur_len_ms):
                 if pd.notna(_b0) and pd.notna(_bl):
                     _x_max_ms = max(_x_max_ms, float(_b0) + float(_bl))
-            _x_pad_ms = 14.0 * 86400000.0
+            _x_pad_ms = 28.0 * 86400000.0  # запас справа под подписи дат на концах полос
 
             # Numeric Y + lane offset: равномерный шаг строк (как «График проекта»).
             _has_fact = any(pd.notna(x) for x in cur_len_ms)
@@ -11721,6 +11736,8 @@ def dashboard_plan_fact_dates(df):
                 for b in cur_base_ms
             ]
 
+            _base_lbl_clr = _fin_chart_label_color(dark="#5eead4", light="#0f766e")
+            _cur_lbl_clr = _fin_chart_label_color(dark="#fdba74", light="#c2410c")
             fig.add_trace(
                 go.Bar(
                     name="Базовое окончание",
@@ -11730,6 +11747,10 @@ def dashboard_plan_fact_dates(df):
                     base=_plan_base_dates,
                     width=_PF_GANTT_BAR_WIDTH,
                     marker=dict(color="#14b8a6"),
+                    text=base_txt,
+                    textposition="outside",
+                    textfont=dict(size=10, color=_base_lbl_clr),
+                    constraintext="none",
                     cliponaxis=False,
                     hovertemplate="%{customdata[0]}<br>Базовое окончание: %{customdata[2]}<extra></extra>",
                     customdata=cust_b,
@@ -11744,6 +11765,10 @@ def dashboard_plan_fact_dates(df):
                     base=_fact_base_dates,
                     width=_PF_GANTT_BAR_WIDTH,
                     marker=dict(color="#fb923c"),
+                    text=cur_txt,
+                    textposition="outside",
+                    textfont=dict(size=10, color=_cur_lbl_clr),
+                    constraintext="none",
                     cliponaxis=False,
                     hovertemplate="%{customdata[0]}<br>Окончание: %{customdata[2]}<extra></extra>",
                     customdata=cust_p,
@@ -11769,7 +11794,7 @@ def dashboard_plan_fact_dates(df):
                         font=dict(size=13, color=_fin_chart_axis_color()),
                     ),
                 ),
-                margin=dict(l=4, r=56, t=8, b=48),
+                margin=dict(l=4, r=96, t=8, b=48),
                 legend=_PF_GANTT_LEGEND,
                 bargap=0.35,
                 bargroupgap=0.45,
