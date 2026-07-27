@@ -40808,8 +40808,9 @@ def calculate_forecast_budget(
     row_modes: Optional[pd.Series] = None,
 ):
     """
-    Прогноз БДДС по месяцам: «БДДС план» (сводка по MSP), «БДДС прогноз» (распределение),
-    «БДДС факт» (распределение факта по тем же весам).
+    Прогноз БДДС по месяцам:
+    - «БДДС план» / «БДДС факт» — всегда равномерно по месяцам срока лота;
+    - «БДДС прогноз» — равномерно или % A/B/C (по условию строки / row_modes).
     """
     work_df = edited_data.copy() if edited_data is not None else df.copy()
     return compute_bddcs_forecast_monthly(
@@ -41068,12 +41069,13 @@ def _forecast_filter_rows_by_plan_end_range(
         return work
     if "plan end" not in work.columns:
         return work
-    pe = pd.to_datetime(work["plan end"], errors="coerce")
+    # Не dayfirst: YYYY-MM-DD иначе ломается (2026-06-01 → январь).
+    pe = work["plan end"].map(_forecast_parse_editor_date)
     if not pe.notna().any():
         return work
     # Начало лота: plan start, если есть; иначе — plan end (одномоментный лот).
     if "plan start" in work.columns:
-        ps = pd.to_datetime(work["plan start"], errors="coerce")
+        ps = work["plan start"].map(_forecast_parse_editor_date)
         ps = ps.fillna(pe)
     else:
         ps = pe
@@ -41219,8 +41221,8 @@ def _forecast_deduplicate_msp_rows(pdf: pd.DataFrame) -> pd.DataFrame:
     if "plan start" not in work.columns or "plan end" not in work.columns:
         return work
     work["_fc_lot_key"] = _forecast_lot_label_series(work).astype(str).str.strip().str.casefold()
-    work["_fc_ps"] = pd.to_datetime(work["plan start"], errors="coerce").dt.normalize()
-    work["_fc_pe"] = pd.to_datetime(work["plan end"], errors="coerce").dt.normalize()
+    work["_fc_ps"] = work["plan start"].map(_forecast_parse_editor_date).dt.normalize()
+    work["_fc_pe"] = work["plan end"].map(_forecast_parse_editor_date).dt.normalize()
     work["_fc_score"] = (
         pd.to_numeric(work.get("budget plan"), errors="coerce").fillna(0.0)
         + pd.to_numeric(work.get("budget fact"), errors="coerce").fillna(0.0)
@@ -41621,12 +41623,15 @@ def _finance_force_grouped_bar_annotations(
                 yf = float(y)
             except (TypeError, ValueError):
                 continue
-            if not np.isfinite(yf) or abs(yf) < float(min_abs):
+            if not np.isfinite(yf):
                 continue
             t = ""
             if i < len(texts) and texts[i] is not None and str(texts[i]).strip():
                 t = str(texts[i]).strip()
-            else:
+            # Явная подпись (в т.ч. «0.0») важнее порога min_abs — иначе пропадает откл.≈0.
+            if not t and abs(yf) < float(min_abs):
+                continue
+            if not t:
                 t = f"{yf:.1f}"
             if not t:
                 continue
@@ -41635,15 +41640,6 @@ def _finance_force_grouped_bar_annotations(
             col = base_color
             if per_colors is not None and i < len(per_colors):
                 col = per_colors[i]
-            # Прозрачные столбцы отклонения — без подписи.
-            try:
-                mc = getattr(tr, "marker", None)
-                mcol = getattr(mc, "color", None) if mc is not None else None
-                if isinstance(mcol, (list, tuple)) and i < len(mcol):
-                    if str(mcol[i]).startswith("rgba(0,0,0,0)"):
-                        continue
-            except Exception:
-                pass
             anns.append(
                 dict(
                     x=x,
@@ -41653,8 +41649,8 @@ def _finance_force_grouped_bar_annotations(
                     xref="x",
                     yref="y",
                     xanchor="center",
-                    yanchor="bottom",
-                    yshift=6,
+                    yanchor="bottom" if yf >= 0 else "top",
+                    yshift=6 if yf >= 0 else -6,
                     xshift=float(xshift),
                     font=dict(size=11, color=col, family="Arial, Helvetica, sans-serif"),
                     bgcolor="rgba(255,255,255,0.65)",
@@ -42257,11 +42253,14 @@ _FORECAST_EDITOR_HELP_MD = (
     "3. График и таблица пересчитываются **сразу** по значениям в полях; "
     "**«Применить правки»** дополнительно фиксирует их в сессии.\n"
     "4. **План** и **факт** по месяцам: сумма лота делится **равномерно** на число месяцев "
-    "между «План. начало» и «План. окончание».\n"
-    "5. **Прогноз (уточнённый план)** при «Равномерно» — та же помесячная доля плана; "
+    "между «План. начало» и «План. окончание» (условие A/B/C на план/факт **не влияет**).\n"
+    "5. **Прогноз (уточнённый план)** при «Равномерно» — та же помесячная доля **плана**; "
     "при «% Распределения» — **A%** в месяц начала, **C%** в месяц окончания, "
     "**B%** поровну по промежуточным месяцам.\n"
-    "6. Отклонение (план − прогноз) видно в **месяцах срока лота**. "
+    "6. По умолчанию у всех лотов **«Равномерно»**, поля **A%/B%/C% заблокированы**. "
+    "После выбора «% Распределения» блокировка снимается (нужно **A+B+C = 100%**). "
+    "Кнопки «Всем лотам: % A/B/C» / «равномерно» меняют условие сразу у всех строк.\n"
+    "7. Отклонение (план − прогноз) видно в **месяцах срока лота**. "
     "Вне срока лота % A/B/C на месяц не влияет.\n\n"
     "**Служебные строки** (узлы MSP без сумм, уровень ≤2) скрыты по умолчанию — "
     "на расчёт **не влияют**. Чекбокс ниже — показать их в списке."
@@ -42357,12 +42356,12 @@ def dashboard_forecast_budget(df):
             ensure_date_columns(filtered_scope)
             with c4:
                 if "plan end" in filtered_scope.columns:
-                    _pe_fc = pd.to_datetime(filtered_scope["plan end"], errors="coerce")
+                    _pe_fc = filtered_scope["plan end"].map(_forecast_parse_editor_date)
                     if _pe_fc.notna().any():
                         _def_sf = _pe_fc.min().date() if pd.notna(_pe_fc.min()) else None
                         _def_st = _pe_fc.max().date() if pd.notna(_pe_fc.max()) else None
                         try:
-                            _pe_all_fc = pd.to_datetime(df_work["plan end"], errors="coerce")
+                            _pe_all_fc = df_work["plan end"].map(_forecast_parse_editor_date)
                             if _pe_all_fc.notna().any():
                                 _mn_all_fc = _pe_all_fc.min().date()
                                 _mx_all_fc = _pe_all_fc.max().date()
@@ -42492,6 +42491,7 @@ def dashboard_forecast_budget(df):
                 {
                     "Раздел": _block,
                     "Лот": _lot_lbl.astype(str),
+                    # По умолчанию равномерно; A/B/C заблокированы, пока не выбрано «% Распределения».
                     "Условие распределения": ["Равномерно"] * n,
                     "План. начало": plan_start_str,
                     "План. окончание": plan_end_str,
@@ -42524,8 +42524,9 @@ def dashboard_forecast_budget(df):
                 "Правки в таблице лотов: **Администратор**, **Суперадминистратор**, **РП** или **Финансист**."
             )
 
-        _data_key = f"forecast_edit_data_v10_{_npk_fc}"
-        _sig_key = f"forecast_edit_src_sig_v10_{_npk_fc}"
+        _data_key = f"forecast_edit_data_v12_{_npk_fc}"
+        _sig_key = f"forecast_edit_src_sig_v12_{_npk_fc}"
+        _widget_prefix = f"fcw_v12_{_npk_fc}"
         _req_cols = (
             "Раздел",
             "Лот",
@@ -42541,6 +42542,36 @@ def dashboard_forecast_budget(df):
         _src_bp = float(pd.to_numeric(project_df.get("budget plan"), errors="coerce").fillna(0.0).sum())
         _src_bf = float(pd.to_numeric(project_df.get("budget fact"), errors="coerce").fillna(0.0).sum())
         _src_sig = (len(project_df), round(_src_bp, 2), round(_src_bf, 2))
+
+        def _fc_sync_lot_widgets(edit_df: pd.DataFrame) -> None:
+            """Синхронизировать session_state виджетов со строками редактора (после bulk/reset)."""
+            if edit_df is None or getattr(edit_df, "empty", True):
+                return
+            for _i in range(len(edit_df)):
+                _r = edit_df.iloc[_i]
+                _dist_v = str(_r.get("Условие распределения", "Равномерно") or "Равномерно")
+                st.session_state[f"{_widget_prefix}_dist_{_i}"] = _dist_v
+                st.session_state[f"{_widget_prefix}_ps_{_i}"] = str(_r.get("План. начало", "") or "")
+                st.session_state[f"{_widget_prefix}_pe_{_i}"] = str(_r.get("План. окончание", "") or "")
+                try:
+                    st.session_state[f"{_widget_prefix}_bp_{_i}"] = float(
+                        pd.to_numeric(_r.get("БДДС план (утверждённый), млн руб."), errors="coerce") or 0.0
+                    )
+                except Exception:
+                    pass
+                try:
+                    st.session_state[f"{_widget_prefix}_bf_{_i}"] = float(
+                        pd.to_numeric(_r.get("БДДС факт, млн руб."), errors="coerce") or 0.0
+                    )
+                except Exception:
+                    pass
+                for _suf, _col in (("a", "A, %"), ("b", "B, %"), ("c", "C, %")):
+                    try:
+                        st.session_state[f"{_widget_prefix}_{_suf}_{_i}"] = float(
+                            pd.to_numeric(_r.get(_col), errors="coerce") or 0.0
+                        )
+                    except Exception:
+                        pass
 
         def _fc_reset_editor_data(*, preserve_dist: bool = False) -> None:
             """Пересобрать редактор из файла; при preserve_dist сохранить условие/A/B/C по имени лота."""
@@ -42575,6 +42606,7 @@ def dashboard_forecast_budget(df):
                             pass
             st.session_state[_data_key] = _new
             st.session_state[_sig_key] = _src_sig
+            _fc_sync_lot_widgets(_new)
 
         if _data_key not in st.session_state:
             _fc_reset_editor_data(preserve_dist=False)
@@ -42588,11 +42620,39 @@ def dashboard_forecast_budget(df):
             if any(c not in _ed0.columns for c in _req_cols):
                 _fc_reset_editor_data(preserve_dist=False)
 
-        if _can_edit_finance and st.button(
-            "Сбросить таблицу к данным файла", key=f"forecast_reset_v8_{_npk_fc}"
-        ):
-            _fc_reset_editor_data(preserve_dist=False)
-            st.rerun()
+        if _can_edit_finance:
+            _fc_btn_reset, _fc_btn_abc_all, _fc_btn_uni_all = st.columns(3, gap="small")
+            with _fc_btn_reset:
+                if st.button(
+                    "Сбросить таблицу к данным файла",
+                    key=f"forecast_reset_v12_{_npk_fc}",
+                ):
+                    _fc_reset_editor_data(preserve_dist=False)
+                    st.rerun()
+            with _fc_btn_abc_all:
+                if st.button(
+                    "Всем лотам: % A/B/C",
+                    key=f"forecast_abc_all_v12_{_npk_fc}",
+                    help="Условие «% Распределения» для всех строк; A%/B%/C% разблокируются "
+                    "(по умолчанию 34/33/33). Прогноз в месяц начала лота = A% × сумма лота.",
+                ):
+                    _ed_bulk = st.session_state[_data_key].copy()
+                    _ed_bulk["Условие распределения"] = "% Распределения"
+                    st.session_state[_data_key] = _ed_bulk
+                    _fc_sync_lot_widgets(_ed_bulk)
+                    st.rerun()
+            with _fc_btn_uni_all:
+                if st.button(
+                    "Всем лотам: равномерно",
+                    key=f"forecast_uni_all_v12_{_npk_fc}",
+                    help="Условие «Равномерно»: A%/B%/C% заблокированы; "
+                    "прогноз по месяцу = сумма лота / число месяцев срока.",
+                ):
+                    _ed_bulk = st.session_state[_data_key].copy()
+                    _ed_bulk["Условие распределения"] = "Равномерно"
+                    st.session_state[_data_key] = _ed_bulk
+                    _fc_sync_lot_widgets(_ed_bulk)
+                    st.rerun()
 
         _edit_df_live = st.session_state[_data_key].copy()
         _dist_options = ["Равномерно", "% Распределения"]
@@ -42639,12 +42699,18 @@ def dashboard_forecast_budget(df):
             st.caption(
                 f"Лотов **{_n_lots_fc}** в редакторе (всего в проекте {_n_lots_all_fc})."
             )
+            st.caption(
+                "По умолчанию **«Равномерно»** — A%/B%/C% **заблокированы**. "
+                "При «% Распределения» блокировка снимается: **A%** в месяц начала, "
+                "**C%** в окончание, **B%** поровну в промежуточные. "
+                "**План/факт** по месяцам всегда делятся равномерно."
+            )
             _render_forecast_lot_editor_sticky_header()
             _body_h = int(min(720, max(220, 56 + len(_slice_df) * 44)))
             with st.container(height=_body_h, border=True):
                 _form_slice = _render_forecast_lot_editor_widgets(
                     _slice_df,
-                    key_prefix=f"fcw_v10_{_npk_fc}",
+                    key_prefix=_widget_prefix,
                     dist_options=_dist_options,
                     row_key_ids=_page_orig_idx,
                 )
@@ -42656,14 +42722,14 @@ def dashboard_forecast_budget(df):
             _fc_apply = st.button(
                 "Применить правки",
                 type="primary",
-                key=f"forecast_apply_v10_{_npk_fc}",
+                key=f"forecast_apply_v12_{_npk_fc}",
                 help="Зафиксировать текущие значения полей в сессии. "
                 "График уже считается по полям без нажатия.",
             )
             if _fc_apply:
-                st.session_state[f"forecast_apply_flash_v10_{_npk_fc}"] = True
+                st.session_state[f"forecast_apply_flash_v12_{_npk_fc}"] = True
                 st.rerun()
-            if st.session_state.pop(f"forecast_apply_flash_v10_{_npk_fc}", False):
+            if st.session_state.pop(f"forecast_apply_flash_v12_{_npk_fc}", False):
                 st.success("Правки зафиксированы в сессии.")
         else:
             st.dataframe(_edit_df_live, width="stretch", height=_scroll_h, hide_index=True)
@@ -42858,9 +42924,11 @@ def dashboard_forecast_budget(df):
         # БДДС план и БДДС факт — всегда на графике и в легенде.
         # Селектор «Отклонение … считать к» влияет только на расчёт столбца отклонения.
         if _dev_base_fc == "БДДС факт":
-            _dev_label_fc = "Отклонение (факт − прогноз), млн. руб."
+            _dev_label_fc = "Откл. (факт − прогноз)"
+            _dev_hover_fc = "Отклонение (факт − прогноз), млн. руб."
         else:
-            _dev_label_fc = "Отклонение (план − прогноз), млн. руб."
+            _dev_label_fc = "Откл. (план − прогноз)"
+            _dev_hover_fc = "Отклонение (план − прогноз), млн. руб."
 
         # Порог скрытия мелких/нулевых подписей, чтобы они не накладывались.
         _lbl_max_fc = float(
@@ -42958,10 +43026,13 @@ def dashboard_forecast_budget(df):
                     _dev_bar_colors.append(_FINANCE_DEV_BAR_RED)
                     _dev_txt_colors.append(_FINANCE_DEV_LABEL_RED)
                 else:
-                    _dev_bar_colors.append("rgba(0,0,0,0)")
+                    # Непрозрачный нейтральный столбец — иначе «подпись на отклонении» пропадает
+                    # (при равномерном прогнозе отклонение ≈ 0 и серия становилась невидимой).
+                    _dev_bar_colors.append("rgba(148,163,184,0.45)")
                     _dev_txt_colors.append(_bar_lbl_fc)
+            # Подписи отклонения всегда (в т.ч. 0.0) — отдельный низкий порог, не общий floor пика.
             _dev_txt_all = _finance_deviation_bar_text_signed_mln(
-                _dev_signed, min_abs_mln=_lbl_floor_mln, decimals=1, unit_suffix=" млн. руб."
+                _dev_signed, min_abs_mln=0.0, decimals=1, unit_suffix=" млн. руб."
             )
             fig_fc.add_trace(
                 go.Bar(
@@ -42980,7 +43051,7 @@ def dashboard_forecast_budget(df):
                     customdata=_dev_signed.map(
                         lambda v: format_million_rub(float(v) * 1e6) if pd.notna(v) else ""
                     ),
-                    hovertemplate=f"<b>%{{x}}</b><br>{_dev_label_fc}: %{{customdata}}<extra></extra>",
+                    hovertemplate=f"<b>%{{x}}</b><br>{_dev_hover_fc}: %{{customdata}}<extra></extra>",
                 )
             )
         fig_fc.update_layout(
@@ -42997,6 +43068,17 @@ def dashboard_forecast_budget(df):
             ),
         )
         fig_fc = _apply_finance_bar_label_layout(fig_fc)
+        # Annotations поверх столбцов (явный text «0.0» на откл. сохраняется); bar.text — без дублей.
+        try:
+            fig_fc = _finance_force_grouped_bar_annotations(fig_fc, min_abs=0.05)
+            fig_fc.update_traces(
+                selector=dict(type="bar"),
+                text=None,
+                texttemplate=None,
+                textposition=None,
+            )
+        except Exception:
+            pass
         _ymax_fc = 0.0
         _ymin_fc = 0.0
         if not _chart_df.empty:
@@ -43079,10 +43161,11 @@ def dashboard_forecast_budget(df):
 
     render_table_subheader(st, _fc_name, filters_suffix=_fc_dates)
     _period_hdr = period_label
+    # Короткий заголовок — длинный «Отклонение (план − прогноз)…» клипался в th max-width.
     _dev_col_fc = (
-        "Отклонение (факт − прогноз), млн руб."
+        "Откл. (факт − прогноз), млн"
         if _dev_base_fc == "БДДС факт"
-        else "Отклонение (план − прогноз), млн руб."
+        else "Откл. (план − прогноз), млн"
     )
     try:
         _tot_fact_mln = float(pd.to_numeric(mf_tot_snapshot["bdds_fact"], errors="coerce").fillna(0.0).sum() / 1e6)
