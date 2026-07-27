@@ -35,6 +35,7 @@ from .ui_quiet import (
     migrate_gdrs_month_multiselect_state,
     period_date_range_input,
     LABEL_PERIOD,
+    LABEL_BLOCK,
 )
 from dashboards.dev_projects_tz_matrix import (
     build_dev_tz_matrix_rows,
@@ -7266,14 +7267,11 @@ def _render_deviations_combined_shared_filters(df):
                 ).strip()
                 if _cur_block not in block_opts:
                     st.session_state["devcombo_block"] = "Все"
-                # Явный контейнер + короткая подпись: длинный label в 5 колонках
-                # иногда схлопывал BaseWeb-select до «пустого» зазора (Есипово-5).
                 with st.container(key="devcombo_block_wrap"):
                     st.selectbox(
-                        "Блок",
+                        LABEL_BLOCK,
                         block_opts,
                         key="devcombo_block",
-                        help="Функциональный блок",
                     )
             with col3:
                 _snap_bld = st.session_state.get("project_data_all_snapshots")

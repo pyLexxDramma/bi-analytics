@@ -61,7 +61,7 @@ UNIFIED_FILTERS_CSS = """
     line-height: 1.25 !important;
     margin-bottom: 0.15rem !important;
 }
-/* Явный wrap селекта «Блок» в «Причины отклонений» */
+/* Явный wrap селекта «Функциональный блок» в «Причины отклонений» */
 div[class*="st-key-devcombo_block_wrap"],
 div[class*="st-key-devcombo_block"] {
     min-width: 0 !important;
