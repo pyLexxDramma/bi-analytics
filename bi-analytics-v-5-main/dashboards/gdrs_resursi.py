@@ -1780,7 +1780,7 @@ def load_plan_from_dogovor(
         de = df["date_end"]
         ds = df["date_start"]
         dt = df["date_termination"]
-        # Истёкшие: date_end раньше начала календарной недели снапшота (как в 1С:
+        # Истёкшие: date_end раньше начала ISO-недели месяца снапшота (как в 1С:
         # план действует до недели окончания договора включительно, не до конца недели).
         week_start = _gdrs_plan_expiry_week_start(snap)
         expired = de.notna() & (de > sentinel) & (de.dt.normalize() < week_start)
@@ -2761,16 +2761,66 @@ def _gdrs_dynamics_period_freq(agg_kind: str) -> str:
     return "W"
 
 
+def _gdrs_month_iso_week_keys(year: int, month: int) -> list[int]:
+    """ISO-ключи (year*100+week) недель месяца в порядке дат — как надстрока resursi 1С."""
+    month_start = pd.Timestamp(int(year), int(month), 1)
+    month_end = month_start + pd.offsets.MonthEnd(0)
+    grid = pd.date_range(month_start, month_end, freq="D")
+    iso = grid.isocalendar()
+    keys = (iso["year"].astype(int) * 100 + iso["week"].astype(int)).tolist()
+    return list(dict.fromkeys(keys))
+
+
+def _gdrs_month_week_bounds(
+    year: int,
+    month: int,
+    week_num: int,
+) -> tuple[Optional[pd.Timestamp], Optional[pd.Timestamp]]:
+    """Границы N-й недели месяца (пн–вс / ISO, обрезанные днями месяца), как в resursi."""
+    wn = int(week_num)
+    if wn < 1 or wn > 6:
+        return None, None
+    month_start = pd.Timestamp(int(year), int(month), 1)
+    month_end = month_start + pd.offsets.MonthEnd(0)
+    keys = _gdrs_month_iso_week_keys(year, month)
+    if wn > len(keys):
+        return None, None
+    target = keys[wn - 1]
+    grid = pd.date_range(month_start, month_end, freq="D")
+    iso = grid.isocalendar()
+    key_s = iso["year"].astype(int) * 100 + iso["week"].astype(int)
+    mask = key_s == target
+    if not mask.any():
+        return None, None
+    days = grid[mask]
+    return pd.Timestamp(days.min()).normalize(), pd.Timestamp(days.max()).normalize()
+
+
 def _gdrs_calendar_week_num(day: pd.Timestamp, month_lo: pd.Timestamp) -> int:
-    d = int(pd.Timestamp(day).normalize().day)
-    return min(max((d - 1) // 7 + 1, 1), 6)
+    """Номер недели месяца 1..6: ISO-недели (пн–вс) внутри месяца, как в выгрузке resursi 1С."""
+    d = pd.Timestamp(day).normalize()
+    lo = pd.Timestamp(month_lo).normalize()
+    y, m = int(lo.year), int(lo.month)
+    if int(d.year) != y or int(d.month) != m:
+        y, m = int(d.year), int(d.month)
+    keys = _gdrs_month_iso_week_keys(y, m)
+    if not keys:
+        return 1
+    d_iso = d.isocalendar()
+    d_key = int(d_iso.year) * 100 + int(d_iso.week)
+    try:
+        wn = keys.index(d_key) + 1
+    except ValueError:
+        wn = 1
+    return min(max(wn, 1), 6)
 
 
 def _gdrs_plan_expiry_week_start(snap: pd.Timestamp) -> pd.Timestamp:
-    """Первый день календарной недели месяца для проверки date_end (1–7, 8–14, …)."""
+    """Первый день ISO-недели месяца (в границах месяца) для проверки date_end."""
     d = pd.Timestamp(snap).normalize()
-    start_day = ((int(d.day) - 1) // 7) * 7 + 1
-    return pd.Timestamp(d.year, d.month, start_day)
+    wn = _gdrs_calendar_week_num(d, pd.Timestamp(d.year, d.month, 1))
+    start, _ = _gdrs_month_week_bounds(d.year, d.month, wn)
+    return start if start is not None else pd.Timestamp(d.year, d.month, 1)
 
 
 def _gdrs_calendar_days_in_week(
@@ -2785,13 +2835,9 @@ def _gdrs_calendar_days_in_week(
     if wn < 1 or wn > 6 or hi < lo:
         return 0
     if _gdrs_single_calendar_month(lo, hi):
-        month_last = int((lo + pd.offsets.MonthEnd(0)).day)
-        start_day = (wn - 1) * 7 + 1
-        if start_day > month_last:
+        week_lo, week_hi = _gdrs_month_week_bounds(lo.year, lo.month, wn)
+        if week_lo is None or week_hi is None:
             return 0
-        end_day = min(wn * 7, month_last)
-        week_lo = pd.Timestamp(lo.year, lo.month, start_day)
-        week_hi = pd.Timestamp(lo.year, lo.month, end_day)
         eff_lo = max(week_lo, lo)
         eff_hi = min(week_hi, hi)
         if eff_hi < eff_lo:
@@ -2809,8 +2855,10 @@ def _gdrs_calendar_days_in_week(
 
 def _gdrs_calendar_week_bucket_start(day: pd.Timestamp, month_lo: pd.Timestamp) -> pd.Timestamp:
     lo = pd.Timestamp(month_lo).normalize()
-    start_day = (_gdrs_calendar_week_num(day, lo) - 1) * 7 + 1
-    return pd.Timestamp(lo.year, lo.month, start_day)
+    d = pd.Timestamp(day).normalize()
+    wn = _gdrs_calendar_week_num(d, lo)
+    start, _ = _gdrs_month_week_bounds(lo.year, lo.month, wn)
+    return start if start is not None else pd.Timestamp(lo.year, lo.month, 1)
 
 
 def _gdrs_dynamics_month_lo_for_day(day: pd.Timestamp) -> pd.Timestamp:
@@ -2824,7 +2872,7 @@ def _gdrs_bucket_calendar_week_num(
     date_from: Optional[pd.Timestamp] = None,
     date_to: Optional[pd.Timestamp] = None,
 ) -> Optional[int]:
-    """Номер календарной недели месяца (1–6) для bucket/дня."""
+    """Номер ISO-недели месяца (1–6) для bucket/дня — как в resursi 1С."""
     b = pd.Timestamp(bucket_start).normalize()
     lo = pd.Timestamp(date_from).normalize() if date_from is not None else None
     hi = pd.Timestamp(date_to).normalize() if date_to is not None else None
@@ -3417,7 +3465,7 @@ def _gdrs_single_calendar_month(
     date_from: Optional[pd.Timestamp],
     date_to: Optional[pd.Timestamp],
 ) -> bool:
-    """Один календарный месяц в фильтре — недели 1–6 считаем по дням месяца (1–7, 8–14, …)."""
+    """Один календарный месяц в фильтре — недели 1–6 как ISO-недели месяца (resursi 1С)."""
     if date_from is None or date_to is None:
         return False
     lo = pd.Timestamp(date_from).normalize()
@@ -3433,15 +3481,16 @@ def _gdrs_week_groups(
 ) -> tuple[pd.Series, dict[int, int]]:
     """Недели 1..6 в таблице ГДРС.
 
-    Для одного календарного месяца — «1-я неделя» = дни 1–7, «3-я» = 15–21 (как в 1С).
-    Иначе — ISO-недели по факту в выборке.
+    Для одного календарного месяца — ISO-недели (пн–вс) внутри месяца, как надстрока
+    «1 неделя»… в resursi.csv 1С. Иначе — порядковые ISO-недели по факту в выборке.
     """
     dates = pd.to_datetime(dates, errors="coerce")
     if _gdrs_single_calendar_month(date_from, date_to):
         lo = pd.Timestamp(date_from).normalize()
         hi = pd.Timestamp(date_to).normalize()
-        days = dates.dt.day
-        week_idx = ((days - 1) // 7 + 1).clip(lower=1, upper=6).astype(int)
+        week_idx = dates.map(
+            lambda x: _gdrs_calendar_week_num(x, lo) if pd.notna(x) else 0
+        ).astype(int)
         days_per_week: dict[int, int] = {}
         for wn in gdrs_week_numbers_in_period(lo, hi):
             nd = _gdrs_calendar_days_in_week(lo, hi, wn)
@@ -3456,18 +3505,16 @@ def gdrs_week_period_start(
     date_to: pd.Timestamp,
     week_num: int,
 ) -> Optional[pd.Timestamp]:
-    """Первый день N-й недели периода (календарные недели месяца или ISO)."""
+    """Первый день N-й недели периода (ISO-недели месяца или порядковые ISO)."""
     lo = pd.Timestamp(date_from).normalize()
     hi = pd.Timestamp(date_to).normalize()
     wn = int(week_num)
     if wn < 1 or wn > 6:
         return None
     if _gdrs_single_calendar_month(lo, hi):
-        month_last = int((lo + pd.offsets.MonthEnd(0)).day)
-        start_day = (wn - 1) * 7 + 1
-        if start_day > month_last:
+        start, _ = _gdrs_month_week_bounds(lo.year, lo.month, wn)
+        if start is None:
             return None
-        start = pd.Timestamp(lo.year, lo.month, start_day)
         return max(start, lo)
     grid = pd.date_range(lo, hi, freq="D")
     if len(grid) == 0:
@@ -3491,12 +3538,9 @@ def gdrs_week_period_end(
     if wn < 1 or wn > 6:
         return None
     if _gdrs_single_calendar_month(lo, hi):
-        month_last = int((lo + pd.offsets.MonthEnd(0)).day)
-        start_day = (wn - 1) * 7 + 1
-        if start_day > month_last:
+        _, end = _gdrs_month_week_bounds(lo.year, lo.month, wn)
+        if end is None:
             return None
-        end_day = min(wn * 7, month_last)
-        end = pd.Timestamp(lo.year, lo.month, end_day)
         return min(end, hi)
     # Мульти-месяц: последний день N-й ISO-недели в диапазоне (без привязки к факту).
     grid = pd.date_range(lo, hi, freq="D")
@@ -3515,7 +3559,7 @@ def gdrs_week_numbers_in_period(
 ) -> list[int]:
     """Номера недель 1..N, которые реально есть в выбранном периоде (N ≤ 6).
 
-    Один календарный месяц — недели по дням 1–7, 8–14, … (как в 1С).
+    Один календарный месяц — ISO-недели месяца (как надстрока resursi 1С).
     Иначе — порядковые ISO-недели в диапазоне дат.
     """
     if date_from is None or date_to is None:
@@ -3550,9 +3594,9 @@ def gdrs_week_numbers_with_fact(
     """Номера недель 1..N (из периода), в которых реально есть даты факта СКУД.
 
     Нужно, чтобы фильтр «N неделя» не предлагал недели без факта: напр. неполный
-    месяц (факт до 21-го) — недели 4–5 (дни 22–31) пусты, и выбор «4 неделя» даёт
-    пустые диаграмму/таблицу. Здесь оставляем только недели, где есть хотя бы один
-    день факта в выбранном периоде.
+    месяц (факт только до середины последней ISO-недели) — хвост пуст, и выбор
+    пустой недели даёт пустые диаграмму/таблицу. Оставляем только недели, где есть
+    хотя бы один день факта в выбранном периоде. Нумерация — как в resursi 1С.
     """
     period_weeks = gdrs_week_numbers_in_period(date_from, date_to)
     if not period_weeks:
@@ -4570,10 +4614,9 @@ def build_main_table(
     _week_nums = (
         gdrs_week_numbers_in_period(date_from, date_to) if _show_week_cols else []
     )
-    # Только недели, где реально есть факт СКУД. Неполный месяц (факт до 21-го):
-    # календарные недели 4–5 (дни 22–31) пусты, и если считать «Среднее за месяц»
-    # как среднее по 5 неделям, СКУД делится на 5 вместо 3 (занижение факта и
-    # раздувание отклонения). Пустые недели не показываем и в среднее не берём.
+    # Только недели, где реально есть факт СКУД. Неполный месяц: хвост ISO-недель
+    # без дней факта не включаем — иначе «Среднее за месяц» делится на лишние
+    # пустые недели (занижение факта). Пустые недели не показываем и в среднее не берём.
     if _week_nums and fact is not None and not fact.empty and "week" in fact.columns:
         _weeks_with_fact = {int(w) for w in fact["week"].dropna().unique() if int(w) >= 1}
         _restricted = [wn for wn in _week_nums if wn in _weeks_with_fact]

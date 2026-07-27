@@ -28974,8 +28974,8 @@ def dashboard_gdrs(df, vid_locked: str | None = None, *, theme: str | None = Non
                     help="Один или несколько календарных месяцев. Пусто — все месяцы с данными.",
                 )
             # Опции недель — только те, где реально есть факт СКУД в выбранном
-            # периоде. Иначе «N неделя» без факта (неполный месяц: факт до 21-го →
-            # недели 4–5 пусты) даёт пустые диаграмму и таблицу.
+            # периоде (нумерация ISO-недель месяца как в resursi 1С). Иначе выбор
+            # пустой недели даёт пустые диаграмму и таблицу.
             _wk_periods, _ = gdrs_resolve_month_periods(_month_options, sel_month_labels)
             _wk_from, _wk_to = gdrs_months_date_range(_wk_periods)
             _wk_from = _pd.to_datetime(_wk_from)
