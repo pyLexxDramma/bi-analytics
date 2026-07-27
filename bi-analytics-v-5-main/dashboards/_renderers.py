@@ -18331,6 +18331,26 @@ def _rd_monthly_sections_aggregate(
     return monthly[monthly["plan"] > 0].copy()
 
 
+def _rd_monthly_to_cumulative(monthly: pd.DataFrame) -> pd.DataFrame:
+    """Помесячный агрегат → накопительные plan/fact и прирост факта за месяц."""
+    if monthly is None or getattr(monthly, "empty", True):
+        return pd.DataFrame()
+    out = monthly.sort_values("_month", ascending=True).copy()
+    plan_n = pd.to_numeric(out["plan"], errors="coerce").fillna(0.0).clip(lower=0.0)
+    done_n = pd.to_numeric(out["done"], errors="coerce").fillna(0.0).clip(lower=0.0)
+    # Факт за месяц: выполнено + просрочено (сдано с опозданием тоже «выдано»).
+    if "overdue" in out.columns:
+        ovd_n = pd.to_numeric(out["overdue"], errors="coerce").fillna(0.0).clip(lower=0.0)
+        fact_inc = (done_n + ovd_n).clip(lower=0.0)
+    else:
+        fact_inc = done_n
+    out["plan"] = plan_n.cumsum()
+    out["done"] = fact_inc.cumsum()
+    out["fact_inc"] = fact_inc
+    out["overdue"] = 0.0
+    return out
+
+
 def _render_rd_monthly_overlay_chart(
     monthly: pd.DataFrame,
     *,
@@ -18339,151 +18359,271 @@ def _render_rd_monthly_overlay_chart(
     subheader: str | None = None,
     chart_key: str | None = None,
     caption_parts: tuple[str, str] | None = None,
+    cumulative: bool = False,
 ) -> None:
     """
-    «Динамика по месяцам» — стек внутри плана (сумма сегментов = план):
+    «Динамика по месяцам».
+
+    ``cumulative=False`` — стек внутри плана месяца:
       • зелёный — выполнено вовремя;
-      • жёлтый — остаток плана (ещё не сдан и не просрочен);
-      • красный — просрочено (после жёлтого).
-    Не рисуем красный «поверх» полного плана (иначе 17+17=34 при 17 док.).
+      • жёлтый — остаток плана;
+      • красный — просрочено.
+
+    ``cumulative=True`` — накопительно на дату месяца (overlay):
+      • жёлтый — план накопительно;
+      • зелёный — факт накопительно;
+      • справа «+N» — прирост факта за этот месяц.
+    Порядок месяцев (гориз.): последний сверху (h-bar: первая категория = сверху).
     """
     if monthly is None or getattr(monthly, "empty", True):
         return
     monthly = monthly.copy()
+    if cumulative and not str(metric_mode).strip().startswith("%"):
+        monthly = _rd_monthly_to_cumulative(monthly)
+        if monthly.empty:
+            return
     monthly["Месяц"] = monthly["_month"].apply(
         lambda p: f"{RUSSIAN_MONTHS.get(p.month, str(p.month))} {p.year}"
     )
     use_pct = str(metric_mode).strip().startswith("%")
     plan_n = pd.to_numeric(monthly["plan"], errors="coerce").fillna(0.0).clip(lower=0.0)
     done_n = pd.to_numeric(monthly["done"], errors="coerce").fillna(0.0).clip(lower=0.0)
-    overdue_n = pd.to_numeric(monthly["overdue"], errors="coerce").fillna(0.0).clip(lower=0.0)
-    # Доли не больше плана; остаток плана = plan − done − overdue.
-    overdue_n = np.minimum(overdue_n, plan_n)
-    done_n = np.minimum(done_n, (plan_n - overdue_n).clip(lower=0.0))
-    rest_n = (plan_n - done_n - overdue_n).clip(lower=0.0)
-    if use_pct:
-        monthly["done_v"] = np.where(plan_n > 0, (done_n / plan_n * 100).round(1), 0.0)
-        monthly["rest_v"] = np.where(plan_n > 0, (rest_n / plan_n * 100).round(1), 0.0)
-        monthly["overdue_v"] = np.where(
-            plan_n > 0, (overdue_n / plan_n * 100).round(1), 0.0
-        )
-        x_title = "% РД (по месяцу плановой даты)"
-    else:
-        monthly["done_v"] = done_n.round(1)
-        monthly["rest_v"] = rest_n.round(1)
-        monthly["overdue_v"] = overdue_n.round(1)
-        x_title = "Количество разделов"
-    monthly["plan_v"] = plan_n.round(1)
+    overdue_n = pd.to_numeric(monthly.get("overdue", 0.0), errors="coerce").fillna(0.0).clip(lower=0.0)
 
     def _lbl(v: float, pct: bool) -> str:
         if pd.isna(v) or float(v) <= 0:
             return ""
         return f"{float(v):.0f}%" if pct else f"{int(round(float(v)))}"
 
+    def _inc_lbl(v: float) -> str:
+        if pd.isna(v) or float(v) <= 0:
+            return ""
+        return f"+{int(round(float(v)))}"
+
     if subheader:
         st.subheader(subheader)
 
     is_h = orientation == "h"
-    if is_h:
-        # Горизонтально: первая категория Y ВНИЗУ — сортируем по возрастанию,
-        # чтобы сверху был последний (текущий) месяц: июль → июнь → май.
-        plot_df = monthly.sort_values("_month", ascending=True)
-    else:
-        # Вертикально: слева направо от текущего к ранним.
-        plot_df = monthly.sort_values("_month", ascending=False)
+    # Хронология по возрастанию; для h — numeric Y (0 снизу = ранний, n-1 сверху = последний).
+    plot_df = monthly.sort_values("_month", ascending=True).reset_index(drop=True)
     cat = plot_df["Месяц"].tolist()
-    _x_max = float(
-        pd.to_numeric(plot_df["plan_v"], errors="coerce").fillna(0.0).max()
-        if len(plot_df)
-        else 1.0
-    )
-    _x_max = max(_x_max, 1.0)
 
     fig = go.Figure()
-    _bar_text_common = dict(
-        textposition="auto",
-        textangle=0,
-        constraintext="none",
-        cliponaxis=False,
-    )
-    # Порядок стека слева направо: выполнено → остаток плана → просрочка.
-    _done_kw = dict(
-        name="Выполнено",
-        marker_color="#27AE60",
-        text=[_lbl(v, use_pct) for v in plot_df["done_v"]],
-        insidetextfont=dict(size=18, color="white"),
-        outsidetextfont=dict(size=18, color="#1a1a1a"),
-        hovertemplate="<b>%{y}</b><br>Выполнено: %{x}<extra></extra>"
-        if is_h
-        else "<b>%{x}</b><br>Выполнено: %{y}<extra></extra>",
-        **_bar_text_common,
-    )
-    _plan_kw = dict(
-        name="План (остаток)",
-        marker_color="#F39C12",
-        text=[_lbl(v, use_pct) for v in plot_df["rest_v"]],
-        customdata=plot_df["plan_v"],
-        insidetextfont=dict(size=18, color="#1a1a1a"),
-        outsidetextfont=dict(size=18, color="#1a1a1a"),
-        hovertemplate="<b>%{y}</b><br>Остаток плана: %{x}<br>План всего: %{customdata}<extra></extra>"
-        if is_h
-        else "<b>%{x}</b><br>Остаток плана: %{y}<br>План всего: %{customdata}<extra></extra>",
-        **_bar_text_common,
-    )
-    _ovd_kw = dict(
-        name="Просрочено",
-        marker_color="#C0392B",
-        text=[_lbl(v, use_pct) for v in plot_df["overdue_v"]],
-        insidetextfont=dict(size=18, color="white"),
-        outsidetextfont=dict(size=18, color="#1a1a1a"),
-        hovertemplate="<b>%{y}</b><br>Просрочено: %{x}<extra></extra>"
-        if is_h
-        else "<b>%{x}</b><br>Просрочено: %{y}<extra></extra>",
-        **_bar_text_common,
-    )
-    if is_h:
-        fig.add_trace(
-            go.Bar(y=cat, x=plot_df["done_v"], orientation="h", **_done_kw)
-        )
-        fig.add_trace(
-            go.Bar(y=cat, x=plot_df["rest_v"], orientation="h", **_plan_kw)
-        )
-        fig.add_trace(
-            go.Bar(y=cat, x=plot_df["overdue_v"], orientation="h", **_ovd_kw)
-        )
-        fig.update_layout(
-            xaxis_title=x_title,
-            yaxis_title="Месяц",
-        )
-    else:
-        fig.add_trace(go.Bar(x=cat, y=plot_df["done_v"], **_done_kw))
-        fig.add_trace(go.Bar(x=cat, y=plot_df["rest_v"], **_plan_kw))
-        fig.add_trace(go.Bar(x=cat, y=plot_df["overdue_v"], **_ovd_kw))
-        fig.update_layout(xaxis_title="Месяц", yaxis_title=x_title)
-
     _ax = _fin_chart_axis_color()
+    _lbl_out = _fin_chart_label_color(dark="#e8eef5", light="#111827")
+    _use_numeric_y = False
+
+    if cumulative and not use_pct:
+        plot_df = plot_df.copy()
+        plot_df["plan_v"] = pd.to_numeric(plot_df["plan"], errors="coerce").fillna(0.0)
+        plot_df["done_v"] = pd.to_numeric(plot_df["done"], errors="coerce").fillna(0.0)
+        plot_df["fact_inc_v"] = pd.to_numeric(
+            plot_df.get("fact_inc", 0.0), errors="coerce"
+        ).fillna(0.0)
+        _x_max = float(
+            max(
+                float(plot_df["plan_v"].max() if len(plot_df) else 0.0),
+                float(plot_df["done_v"].max() if len(plot_df) else 0.0),
+                1.0,
+            )
+        )
+        x_title = "Количество разделов (накопительно)"
+        _inc_txt = [_inc_lbl(v) for v in plot_df["fact_inc_v"]]
+        # «+N» — только прирост за месяц (не накопленный итог).
+        _plan_longer = (plot_df["plan_v"] >= plot_df["done_v"]).tolist()
+        _plan_inc = [t if longer else "" for t, longer in zip(_inc_txt, _plan_longer)]
+        _fact_inc = [t if not longer else "" for t, longer in zip(_inc_txt, _plan_longer)]
+        _month_hover = plot_df["Месяц"].tolist()
+        _plan_kw = dict(
+            name="План",
+            marker_color="#F39C12",
+            opacity=0.92,
+            text=_plan_inc,
+            texttemplate="%{text}",
+            textposition="outside",
+            textfont=dict(size=15, color=_lbl_out),
+            cliponaxis=False,
+            constraintext="none",
+            customdata=_month_hover,
+            hovertemplate=(
+                "<b>%{customdata}</b><br>План (накопительно): %{x}<extra></extra>"
+                if is_h
+                else "<b>%{x}</b><br>План (накопительно): %{y}<extra></extra>"
+            ),
+        )
+        _fact_kw = dict(
+            name="Факт",
+            marker_color="#27AE60",
+            opacity=0.95,
+            text=_fact_inc,
+            texttemplate="%{text}",
+            textposition="outside",
+            textfont=dict(size=15, color=_lbl_out),
+            cliponaxis=False,
+            constraintext="none",
+            customdata=_month_hover,
+            hovertemplate=(
+                "<b>%{customdata}</b><br>Факт (накопительно): %{x}<extra></extra>"
+                if is_h
+                else "<b>%{x}</b><br>Факт (накопительно): %{y}<extra></extra>"
+            ),
+        )
+        if is_h:
+            _use_numeric_y = True
+            # plot_df по возрастанию: y=0 ранний (низ), y=n-1 последний (верх).
+            cat = plot_df["Месяц"].tolist()
+            y_idx = list(range(len(plot_df)))
+            fig.add_trace(
+                go.Bar(y=y_idx, x=plot_df["plan_v"], orientation="h", **_plan_kw)
+            )
+            fig.add_trace(
+                go.Bar(y=y_idx, x=plot_df["done_v"], orientation="h", **_fact_kw)
+            )
+            fig.update_layout(xaxis_title=x_title, yaxis_title="Месяц")
+        else:
+            fig.add_trace(go.Bar(x=cat, y=plot_df["plan_v"], **_plan_kw))
+            fig.add_trace(go.Bar(x=cat, y=plot_df["done_v"], **_fact_kw))
+            fig.update_layout(xaxis_title="Месяц", yaxis_title=x_title)
+        _n_leg = 2
+        _barmode = "overlay"
+        _margin_r = 80 if is_h else 36
+    else:
+        # Доли не больше плана; остаток плана = plan − done − overdue.
+        overdue_n = np.minimum(overdue_n, plan_n)
+        done_n = np.minimum(done_n, (plan_n - overdue_n).clip(lower=0.0))
+        rest_n = (plan_n - done_n - overdue_n).clip(lower=0.0)
+        if use_pct:
+            monthly["done_v"] = np.where(plan_n > 0, (done_n / plan_n * 100).round(1), 0.0)
+            monthly["rest_v"] = np.where(plan_n > 0, (rest_n / plan_n * 100).round(1), 0.0)
+            monthly["overdue_v"] = np.where(
+                plan_n > 0, (overdue_n / plan_n * 100).round(1), 0.0
+            )
+            x_title = "% РД (по месяцу плановой даты)"
+        else:
+            monthly["done_v"] = done_n.round(1)
+            monthly["rest_v"] = rest_n.round(1)
+            monthly["overdue_v"] = overdue_n.round(1)
+            x_title = "Количество разделов"
+        monthly["plan_v"] = plan_n.round(1)
+        plot_df = monthly.sort_values("_month", ascending=True).reset_index(drop=True)
+        cat = plot_df["Месяц"].tolist()
+        _x_max = float(
+            pd.to_numeric(plot_df["plan_v"], errors="coerce").fillna(0.0).max()
+            if len(plot_df)
+            else 1.0
+        )
+        _x_max = max(_x_max, 1.0)
+
+        _bar_text_common = dict(
+            textposition="auto",
+            textangle=0,
+            constraintext="none",
+            cliponaxis=False,
+        )
+        _done_kw = dict(
+            name="Выполнено",
+            marker_color="#27AE60",
+            text=[_lbl(v, use_pct) for v in plot_df["done_v"]],
+            insidetextfont=dict(size=18, color="white"),
+            outsidetextfont=dict(size=18, color="#1a1a1a"),
+            customdata=cat,
+            hovertemplate="<b>%{customdata}</b><br>Выполнено: %{x}<extra></extra>"
+            if is_h
+            else "<b>%{x}</b><br>Выполнено: %{y}<extra></extra>",
+            **_bar_text_common,
+        )
+        _plan_kw = dict(
+            name="План (остаток)",
+            marker_color="#F39C12",
+            text=[_lbl(v, use_pct) for v in plot_df["rest_v"]],
+            customdata=list(zip(cat, plot_df["plan_v"].tolist())),
+            insidetextfont=dict(size=18, color="#1a1a1a"),
+            outsidetextfont=dict(size=18, color="#1a1a1a"),
+            hovertemplate="<b>%{customdata[0]}</b><br>Остаток плана: %{x}<br>План всего: %{customdata[1]}<extra></extra>"
+            if is_h
+            else "<b>%{x}</b><br>Остаток плана: %{y}<br>План всего: %{customdata[1]}<extra></extra>",
+            **_bar_text_common,
+        )
+        _ovd_kw = dict(
+            name="Просрочено",
+            marker_color="#C0392B",
+            text=[_lbl(v, use_pct) for v in plot_df["overdue_v"]],
+            insidetextfont=dict(size=18, color="white"),
+            outsidetextfont=dict(size=18, color="#1a1a1a"),
+            customdata=cat,
+            hovertemplate="<b>%{customdata}</b><br>Просрочено: %{x}<extra></extra>"
+            if is_h
+            else "<b>%{x}</b><br>Просрочено: %{y}<extra></extra>",
+            **_bar_text_common,
+        )
+        if is_h:
+            _use_numeric_y = True
+            cat = plot_df["Месяц"].tolist()
+            y_idx = list(range(len(plot_df)))
+            fig.add_trace(
+                go.Bar(y=y_idx, x=plot_df["done_v"], orientation="h", **_done_kw)
+            )
+            fig.add_trace(
+                go.Bar(y=y_idx, x=plot_df["rest_v"], orientation="h", **_plan_kw)
+            )
+            fig.add_trace(
+                go.Bar(y=y_idx, x=plot_df["overdue_v"], orientation="h", **_ovd_kw)
+            )
+            fig.update_layout(xaxis_title=x_title, yaxis_title="Месяц")
+        else:
+            # Вертикально: слева направо от текущего к ранним.
+            plot_df = plot_df.iloc[::-1].reset_index(drop=True)
+            cat = plot_df["Месяц"].tolist()
+            fig.add_trace(go.Bar(x=cat, y=plot_df["done_v"], **{
+                **_done_kw,
+                "text": [_lbl(v, use_pct) for v in plot_df["done_v"]],
+                "customdata": cat,
+            }))
+            fig.add_trace(go.Bar(x=cat, y=plot_df["rest_v"], **{
+                **_plan_kw,
+                "text": [_lbl(v, use_pct) for v in plot_df["rest_v"]],
+                "customdata": list(zip(cat, plot_df["plan_v"].tolist())),
+            }))
+            fig.add_trace(go.Bar(x=cat, y=plot_df["overdue_v"], **{
+                **_ovd_kw,
+                "text": [_lbl(v, use_pct) for v in plot_df["overdue_v"]],
+                "customdata": cat,
+            }))
+            fig.update_layout(xaxis_title="Месяц", yaxis_title=x_title)
+        _n_leg = 3
+        _barmode = "stack"
+        _margin_r = 36
+
+    _n_rows = max(1, len(cat))
     _yaxis_kw: dict = dict(
         tickfont=dict(color=_ax),
         title_font=dict(color=_ax),
     )
-    if is_h:
-        # Первый элемент categoryarray — снизу оси Y → снизу ранний, сверху поздний.
-        _yaxis_kw.update(categoryorder="array", categoryarray=cat)
+    if is_h and _use_numeric_y:
+        # Обычная ось: 0 снизу (ранний), n-1 сверху (последний). Не reversed.
+        _yaxis_kw.update(
+            tickmode="array",
+            tickvals=list(range(_n_rows)),
+            ticktext=cat,
+            range=[-0.5, _n_rows - 0.5],
+            autorange=False,
+            fixedrange=False,
+        )
     elif use_pct:
         _yaxis_kw.update(range=[0, 100], ticksuffix="%")
-    _leg_m = _line_chart_legend_below(n_items=3, long_labels=False)
+    _leg_m = _line_chart_legend_below(n_items=_n_leg, long_labels=False)
     _leg_m["font"] = dict(size=12, color=_fin_chart_legend_text_color())
     fig.update_layout(
-        barmode="stack",
+        barmode=_barmode,
         legend=_leg_m,
         showlegend=True,
-        height=max(520, min(900, len(cat) * 36)) if is_h else 520,
-        margin=dict(l=60, r=36, t=48, b=140),
+        height=max(520, min(900, _n_rows * 36)) if is_h else 520,
+        margin=dict(l=60, r=_margin_r, t=48, b=140),
         xaxis=dict(tickfont=dict(color=_ax), title_font=dict(color=_ax)),
         yaxis=_yaxis_kw,
+        bargap=0.25,
     )
     if is_h:
-        _xrange = [0, (_x_max * 1.12 if not use_pct else 100)]
         if use_pct:
             fig.update_layout(
                 xaxis=dict(
@@ -18496,7 +18636,7 @@ def _render_rd_monthly_overlay_chart(
         else:
             fig.update_layout(
                 xaxis=dict(
-                    range=_xrange,
+                    range=[0, _x_max * (1.18 if cumulative else 1.12)],
                     tickfont=dict(color=_ax),
                     title_font=dict(color=_ax),
                 )
@@ -18504,21 +18644,28 @@ def _render_rd_monthly_overlay_chart(
     elif not use_pct:
         fig.update_layout(
             yaxis=dict(
-                range=[0, _x_max * 1.12],
+                range=[0, _x_max * (1.18 if cumulative else 1.12)],
                 tickfont=dict(color=_ax),
                 title_font=dict(color=_ax),
             )
         )
     fig = apply_chart_background(fig)
-    _leg_m = _line_chart_legend_below(n_items=3, long_labels=False)
+    _leg_m = _line_chart_legend_below(n_items=_n_leg, long_labels=False)
     _leg_m["font"] = dict(size=12, color=_fin_chart_legend_text_color())
     fig.update_layout(
         legend=_leg_m,
         showlegend=True,
-        margin=dict(l=60, r=36, t=48, b=150),
+        margin=dict(l=60, r=_margin_r, t=48, b=150),
+        barmode=_barmode,
     )
-    if is_h:
-        fig.update_yaxes(categoryorder="array", categoryarray=cat)
+    if is_h and _use_numeric_y:
+        fig.update_yaxes(
+            tickmode="array",
+            tickvals=list(range(_n_rows)),
+            ticktext=cat,
+            range=[-0.5, _n_rows - 0.5],
+            autorange=False,
+        )
     _cap = (
         report_chart_caption_body(caption_parts[0], caption_parts[1])
         if caption_parts
@@ -19155,6 +19302,7 @@ def _render_rd_working_doc_monthly_and_detail(
                     ),
                     chart_key=f"{doc_fk}rd_months",
                     caption_parts=("Выдача рабочей документации", "Месяц"),
+                    cumulative=not str(metric_mode).strip().startswith("%"),
                 )
 
     try:
@@ -20714,6 +20862,7 @@ def _rd_plan_fallback_view(
                             ),
                             chart_key=f"rdfb_delay_months_{fb_k}",
                             caption_parts=("Выдача рабочей документации", "по месяцам"),
+                            cumulative=not str(fb_metric_mode).strip().startswith("%"),
                         )
             except Exception:
                 pass
@@ -20957,6 +21106,7 @@ def _rd_plan_fallback_view(
                         ),
                         chart_key=f"rdfb_months_{fb_k}",
                         caption_parts=("Выдача рабочей документации", "по месяцам"),
+                        cumulative=not str(fb_metric_mode).strip().startswith("%"),
                     )
         except Exception:
             pass
@@ -22284,11 +22434,12 @@ def dashboard_rd_delay(df, is_pd: bool = False):
                                 metric_mode="Количество разделов",
                                 orientation="h",
                                 subheader=f"Динамика выдачи {doc_code} по месяцам",
-                                chart_key="pd_delay_monthly_overlay",
+                                chart_key="pd_delay_monthly_cum_v3",
                                 caption_parts=(
                                     "Выдача проектной документации",
                                     "по месяцам",
                                 ),
+                                cumulative=True,
                             )
             except Exception as _pd_m_err:
                 suppress_caption(f"Динамика ПД по месяцам: {_pd_m_err}")
@@ -33228,7 +33379,7 @@ def _pd_dedupe_msp_tasks_latest(df: pd.DataFrame) -> pd.DataFrame:
 
 
 def _pd_table_row_mask(df: pd.DataFrame, metrics_mask: pd.Series, dynamics_mask: pd.Series) -> pd.Series:
-    """Строки для таблицы ПД: metrics (разделы ур.4) → dynamics → строки с шифром."""
+    """Строки для таблицы ПД: metrics/dynamics (ур.5 + этап ПД + шифр) → fallback шифр."""
     m_met = metrics_mask.fillna(False)
     if m_met.any():
         return m_met
@@ -33296,8 +33447,8 @@ def _pd_msp_parent_is_pd_stage(parent_name: str) -> bool:
 def _pd_section_masks(df: pd.DataFrame) -> dict:
     """
     Маски ПД по ТЗ:
-    - metrics: Уровень_структуры=4 + шифр + ветка ПД
-    - dynamics: Уровень=5 + шифр + родитель «Этап Проектная документация» (ур.4)
+    - metrics / dynamics: задачи ур.5 под родителем ур.4 «Этап. Проектная
+      документация» с непустым «Шифр ПД и РД» (общее число разделов ПД).
     """
     hier_col, outline_col, level_col, name_col, block_col = _pd_msp_hierarchy_cols(df)
     cipher_col, cipher_ok = _pd_cipher_filled_mask(df)
@@ -33328,89 +33479,56 @@ def _pd_section_masks(df: pd.DataFrame) -> dict:
         if level_col and level_col in df.columns
         else pd.Series(np.nan, index=df.index)
     )
+    # Стек по outline (level structure): родитель ур.4 «Этап. Проектная документация».
+    parent_names = _pd_msp_immediate_parent_names(df, hier_col, name_col)
+    parent_pd_stage = parent_names.map(_pd_msp_parent_is_pd_stage)
+    # Уровень задачи: колонка «Уровень» (=5), иначе outline=5.
+    lv_task = lv_num
     if outline_col and outline_col in df.columns:
         lv_struct = outline_level_numeric(df[outline_col])
-        # Ур.4 в Ленинском; ур.3+Уровень=5 — в Дмитровском (разные выгрузки MSP).
-        result["metrics_mask"] = (
-            (lv_struct.eq(4) | (lv_struct.eq(3) & lv_num.eq(5)))
-            & ancestor_pd
-            & cipher_m
-        )
-    if level_col and level_col in df.columns:
-        parent_names = _pd_msp_immediate_parent_names(df, hier_col, name_col)
-        parent_pd_stage = parent_names.map(_pd_msp_parent_is_pd_stage)
-        nm = df[name_col].astype(str)
-        razdel_m = nm.str.contains("раздел", case=False, na=False)
-        result["dynamics_mask"] = lv_num.eq(5) & parent_pd_stage & razdel_m
-        if not result["dynamics_mask"].any():
-            result["dynamics_mask"] = lv_num.eq(5) & parent_pd_stage & cipher_m
-        if not result["dynamics_mask"].any():
-            result["dynamics_mask"] = lv_num.eq(5) & parent_pd_stage
-    if not result["metrics_mask"].any() and cipher_m.any():
-        result["metrics_mask"] = cipher_m
-        result["dynamics_mask"] = cipher_m
+        if not lv_task.notna().any():
+            lv_task = lv_struct
+        else:
+            lv_task = lv_task.where(lv_task.notna(), lv_struct)
+    tz_mask = lv_task.eq(5) & parent_pd_stage & cipher_m
+    if not tz_mask.any():
+        # Fallback: ур.5 в ветке ПД с шифром (если имя этапа в выгрузке отличается).
+        tz_mask = lv_task.eq(5) & ancestor_pd & cipher_m
+    if not tz_mask.any() and cipher_m.any():
+        tz_mask = cipher_m
+    result["metrics_mask"] = tz_mask
+    result["dynamics_mask"] = tz_mask
     return result
 
 
 def _pd_delay_row_mask(df: pd.DataFrame, masks: dict) -> pd.Series:
     """
-    Просрочка ПД: разделы этапа «Проектная документация» (ур.4 структуры или
-    ур.5 «Раздел …»), с шифром ПД. Без подзадач ур.5+ (Вентиляция, Кровля и т.п.).
-
-    По ТЗ вкладки «Просрочка выдачи ПД» — ТОЛЬКО основной этап «Проектная
-    документация» (непосредственный родитель), без Корректировки / Согласования /
-    Экспертизы. Иначе крайнее «Базовое окончание» по проекту уезжает на срок
-    корректировки (напр. Дмитровский: 30.06.2026 вместо 30.03.2025), а зелёная
-    полоса (досрочно закрыто) пропадает, т.к. корректировка ещё не 100%.
+    Просрочка ПД: ур.5 под «Этап. Проектная документация» + шифр ПД/РД
+    (metrics/dynamics из ``_pd_section_masks``). Без Корректировки/Согласования.
     """
     empty = pd.Series(False, index=df.index)
-    hier_col = masks.get("hier_col")
-    outline_col = masks.get("outline_col")
-    name_col = masks.get("name_col")
-    block_col = masks.get("block_col")
-    dyn = masks.get("dynamics_mask", empty).fillna(False)
     m_met = masks.get("metrics_mask", empty).fillna(False)
-    _, cipher_ok = _pd_cipher_filled_mask(df)
-    cipher_m = cipher_ok.fillna(False)
-
-    if not hier_col or hier_col not in df.columns or not name_col or name_col not in df.columns:
-        return m_met & ~dyn
-
-    anc = _pd_msp_ancestor_under_pd_stage(df, hier_col, name_col, block_col=block_col)
-    anc_m = anc.fillna(False)
-    nm = df[name_col].astype(str)
-    razdel_m = nm.str.contains(r"Раздел\s+[\d.]", case=False, na=False) | nm.str.contains(
-        "раздел", case=False, na=False
-    )
-
-    # Базовая маска разделов ПД (в ветке ПД, все этапы) — приоритет вариантов.
-    m_all_l4 = m_met & anc_m & cipher_m & razdel_m
-    m_dyn_sec = dyn & anc_m & cipher_m & razdel_m
-    base = empty
-    if m_all_l4.any():
-        base = m_all_l4
-    elif m_dyn_sec.any():
-        base = m_dyn_sec
-    else:
-        if outline_col and outline_col in df.columns:
-            lv_s = outline_level_numeric(df[outline_col])
-            parent_names0 = _pd_msp_immediate_parent_names(df, hier_col, name_col)
-            parent_pd0 = parent_names0.map(_pd_msp_parent_is_pd_stage).fillna(False)
-            m_l4 = lv_s.eq(4) & parent_pd0 & cipher_m & razdel_m & ~dyn
-            if m_l4.any():
-                base = m_l4
-        if not base.any():
-            m_fallback = m_met & anc_m & cipher_m & razdel_m & ~dyn
-            base = m_fallback if m_fallback.any() else (m_met & anc_m & cipher_m & ~dyn)
-
-    # Сузить до основного этапа «Проектная документация» (непосредственный
-    # родитель), исключая Корректировку/Согласование/Экспертизу.
+    dyn = masks.get("dynamics_mask", empty).fillna(False)
+    base = m_met if m_met.any() else dyn
+    if base.any():
+        return base
+    hier_col = masks.get("hier_col")
+    name_col = masks.get("name_col")
+    level_col = masks.get("level_col")
+    if (
+        not hier_col
+        or hier_col not in df.columns
+        or not name_col
+        or name_col not in df.columns
+        or not level_col
+        or level_col not in df.columns
+    ):
+        return empty
+    lv = outline_level_numeric(df[level_col])
     parent_names = _pd_msp_immediate_parent_names(df, hier_col, name_col)
     parent_pd_stage = parent_names.map(_pd_msp_parent_is_pd_stage).fillna(False)
-    scoped = base & parent_pd_stage
-    if scoped.any():
-        return scoped
-    return base
+    _, cipher_ok = _pd_cipher_filled_mask(df)
+    return lv.eq(5) & parent_pd_stage & cipher_ok.fillna(False)
 
 
 def _pd_delay_chart_source_mask(df: pd.DataFrame, masks: dict) -> pd.Series:
@@ -35442,17 +35560,8 @@ def _pd_dynamics_line_tasks_mask(df: pd.DataFrame, masks: dict) -> pd.Series:
     """
     Задачи для линий «План»/«Прогноз»/«Факт» и KPI «План по проекту (БП)».
 
-    Считаем ВСЕ разделы ПД проекта (ур.5, шифр ПД/РД, ветка «Проектная
-    документация» по block/предку), а не только под непосредственным этапом
-    «Этап … Проектная документация». Прежняя маска требовала, чтобы
-    НЕПОСРЕДСТВЕННЫЙ родитель был этим этапом (по порядку строк), из-за чего:
-      1) «План по проекту (БП)» занижался — учитывался лишь один этап
-         (Дмитровский: 20 из ~60 разделов ПД, без корректировки/согласования/
-         экспертизы, хотя в источнике задач по ПД больше 50);
-      2) KPI «схлопывался» до 4-5 при фильтрации (Статус/Период/Раздел):
-         удаление строки-этапа ломало определение родителя.
-    Используем block-ориентированную metrics_mask (её же применяет пирог
-    «Исполнение ПД»), не зависящую от порядка строк.
+    ТЗ: ур.5 под «Этап. Проектная документация» (ур.4) + непустой «Шифр ПД и РД»
+    — та же маска, что metrics/dynamics в ``_pd_section_masks``.
     """
     empty = pd.Series(False, index=df.index)
     metrics = masks.get("metrics_mask", empty).fillna(False)
@@ -35461,8 +35570,7 @@ def _pd_dynamics_line_tasks_mask(df: pd.DataFrame, masks: dict) -> pd.Series:
     dyn = masks.get("dynamics_mask", empty).fillna(False)
     if dyn.any():
         return dyn
-    # Fallback: ур.5 в ветке «Проектная документация» с шифром (без опоры на
-    # непосредственного родителя-этап), если metrics/dynamics недоступны.
+    # Fallback: ур.5 в ветке «Проектная документация» с шифром.
     level_col = masks.get("level_col")
     name_col = masks.get("name_col")
     hier_col = masks.get("hier_col")
@@ -35473,12 +35581,17 @@ def _pd_dynamics_line_tasks_mask(df: pd.DataFrame, masks: dict) -> pd.Series:
         and hier_col and hier_col in df.columns
     ):
         lv_num = outline_level_numeric(df[level_col])
-        ancestor_pd = _pd_msp_ancestor_under_pd_stage(
-            df, hier_col, name_col, block_col=block_col
-        )
+        parent_names = _pd_msp_immediate_parent_names(df, hier_col, name_col)
+        parent_pd_stage = parent_names.map(_pd_msp_parent_is_pd_stage)
         _cipher_col, _cipher_ok = _pd_cipher_filled_mask(df)
         _cipher_ok = (
             _cipher_ok.fillna(False) if _cipher_col else pd.Series(False, index=df.index)
+        )
+        fb = lv_num.eq(5) & parent_pd_stage & _cipher_ok
+        if fb.any():
+            return fb
+        ancestor_pd = _pd_msp_ancestor_under_pd_stage(
+            df, hier_col, name_col, block_col=block_col
         )
         fb = lv_num.eq(5) & ancestor_pd & _cipher_ok
         if fb.any():
@@ -37343,21 +37456,28 @@ def dashboard_documentation(
                     _plan_dates_chart = _chart_bf_bp.where(_chart_bf_bp.notna(), _chart_bf)
                     today = pd_report_date if is_pd else date.today()
                     ts_today = pd.Timestamp(today)
+                    # Общее число разделов ПД — ур.5 под этапом + шифр (без требования даты).
+                    m_sec = pd_chart_mask.fillna(False)
                     m_kpi = plan_line_mask.fillna(False)
                     m_kpi_bp = m_kpi & _plan_dates_chart.notna()
-                    plan_total = float(m_kpi_bp.sum())
+                    plan_total = float(m_sec.sum()) if m_sec.any() else float(m_kpi_bp.sum())
                     plan_to_date = int(
                         (
                             m_kpi_bp
                             & (_plan_dates_chart.dt.normalize() <= ts_today)
                         ).sum()
                     )
-                    done_sec = m_kpi_bp & (
+                    done_sec = m_sec & (
                         (pc >= 99.99)
                         | (af.notna() & (af.dt.normalize() <= ts_today))
                     )
+                    # Факт на дату: среди разделов ТЗ; кривые — по строкам с датами.
                     fact_to_date = int(done_sec.sum())
                     deviation_to_date = float(fact_to_date - plan_to_date)
+                    done_sec_dated = m_kpi_bp & (
+                        (pc >= 99.99)
+                        | (af.notna() & (af.dt.normalize() <= ts_today))
+                    )
 
                     plan_curve = _pd_cumsum_by_granularity(
                         _plan_dates_chart, m_kpi_bp, gran_key
@@ -37369,11 +37489,11 @@ def dashboard_documentation(
                     fcst_curve["Тип"] = "Прогноз по проекту"
                     # Факт: те же разделы, что в KPI «Факт на текущую дату» (не путать с прогнозом).
                     _fact_dates = af.copy()
-                    _fact_proxy = done_sec & _fact_dates.isna()
+                    _fact_proxy = done_sec_dated & _fact_dates.isna()
                     if _fact_proxy.any():
                         _fact_dates = _fact_dates.where(~_fact_proxy, _chart_sf)
                     fact_curve = _pd_cumsum_by_granularity(
-                        _fact_dates, done_sec & _fact_dates.notna(), gran_key
+                        _fact_dates, done_sec_dated & _fact_dates.notna(), gran_key
                     )
                     fact_curve["Тип"] = "Факт"
                     curves = [plan_curve, fcst_curve, fact_curve]
