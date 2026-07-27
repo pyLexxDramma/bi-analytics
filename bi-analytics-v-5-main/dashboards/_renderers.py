@@ -5291,9 +5291,24 @@ def render_chart(
     scroll_viewport_height: для длинных Gantt — figure на полную высоту, прокрутка внутри блока (px).
     compact: фиксированная высота fig без autosize (короткие bar-графики ПД без внутреннего скролла).
     """
+    # Круговая: Plotly по умолчанию оставляет только камеру — полный modebar как у bar.
+    _is_pie = _figure_has_pie_trace(fig)
+    if _is_pie:
+        try:
+            fig = _ensure_pie_full_modebar(fig)
+        except Exception:
+            pass
+        try:
+            _inject_pie_modebar_zoom_sync()
+        except Exception:
+            pass
     cfg = dict(_PLOTLY_CONFIG)
+    if _is_pie:
+        cfg.update(_PLOTLY_CONFIG_FULL_MODEBAR)
     if plotly_config_extra:
         cfg.update(plotly_config_extra)
+    if _is_pie and "modeBarButtons" not in cfg:
+        cfg["modeBarButtons"] = _PLOTLY_MODEBAR_BUTTONS_FULL
     kwargs = {
         "width": "stretch",
         "config": cfg,
