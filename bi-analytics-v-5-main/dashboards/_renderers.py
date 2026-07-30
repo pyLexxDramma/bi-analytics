@@ -38518,7 +38518,7 @@ def _render_budget_histogram_plan_fact_by_projects(filtered_df: pd.DataFrame) ->
             text=_finance_bar_text_mln_rub(
                 budget_by_project["budget plan"],
                 min_abs_mln=_tlbl,
-                unit_suffix=" млн.руб.",
+                unit_suffix=" млн.руб",
             ),
             textposition="outside",
             textfont=dict(size=12, color=_bar_label_color),
@@ -38533,7 +38533,7 @@ def _render_budget_histogram_plan_fact_by_projects(filtered_df: pd.DataFrame) ->
             text=_finance_bar_text_mln_rub(
                 budget_by_project["budget fact"],
                 min_abs_mln=_tlbl,
-                unit_suffix=" млн.руб.",
+                unit_suffix=" млн.руб",
             ),
             textposition="outside",
             textfont=dict(size=12, color=_bar_label_color),
@@ -38549,7 +38549,7 @@ def _render_budget_histogram_plan_fact_by_projects(filtered_df: pd.DataFrame) ->
                 text=_finance_bar_text_mln_rub(
                     budget_by_project["budget adjusted"],
                     min_abs_mln=_tlbl,
-                    unit_suffix=" млн.руб.",
+                    unit_suffix=" млн.руб",
                 ),
                 textposition="outside",
                 textfont=dict(size=12, color=_bar_label_color),
@@ -38564,13 +38564,13 @@ def _render_budget_histogram_plan_fact_by_projects(filtered_df: pd.DataFrame) ->
             _y_fact_lt_plan,
             min_abs_mln=_tlbl,
             decimals=1,
-            unit_suffix=" млн. руб.",
+            unit_suffix=" млн.руб",
         )
         _dev_txt_gt = _finance_deviation_bar_text_signed_mln(
             _y_fact_gt_plan,
             min_abs_mln=_tlbl,
             decimals=1,
-            unit_suffix=" млн. руб.",
+            unit_suffix=" млн.руб",
         )
         if _y_fact_lt_plan.notna().any():
             fig_hist.add_trace(
@@ -39080,7 +39080,7 @@ def _render_approved_budget_monthly_block(
             text=_finance_bar_text_mln_rub(
                 monthly_rows["budget plan"],
                 min_abs_mln=_text_min_mln,
-                unit_suffix=" млн рублей",
+                unit_suffix=" млн.руб",
             ),
             textposition="outside",
             textfont=dict(size=_tf_size, color=_bar_label_color),
@@ -39098,7 +39098,7 @@ def _render_approved_budget_monthly_block(
             text=_finance_bar_text_mln_rub(
                 monthly_rows["budget fact"],
                 min_abs_mln=_text_min_mln,
-                unit_suffix=" млн рублей",
+                unit_suffix=" млн.руб",
             ),
             textposition="outside",
             textfont=dict(size=_tf_size, color=_bar_label_color),
@@ -39116,13 +39116,13 @@ def _render_approved_budget_monthly_block(
             _y_fact_lt_plan,
             min_abs_mln=_text_min_mln,
             decimals=1,
-            unit_suffix=" млн. руб.",
+            unit_suffix=" млн.руб",
         )
         _dev_txt_gt = _finance_deviation_bar_text_signed_mln(
             _y_fact_gt_plan,
             min_abs_mln=_text_min_mln,
             decimals=1,
-            unit_suffix=" млн. руб.",
+            unit_suffix=" млн.руб",
         )
         _months_x = monthly_rows["Месяц"].astype(str).tolist()
         if _y_fact_lt_plan.notna().any():
