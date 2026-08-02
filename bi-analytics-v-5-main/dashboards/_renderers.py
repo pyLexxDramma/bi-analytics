@@ -4762,29 +4762,57 @@ def _bdds_recalc_reserve(df: pd.DataFrame) -> pd.DataFrame:
 
 
 def _bdds_normalize_period_original(df: pd.DataFrame) -> pd.DataFrame:
-    """Нормализует period_original к Period[M] для корректной агрегации графика."""
+    """Нормализует period_original к единой гранулярности (M / Q / Y) для графика."""
     if df is None or getattr(df, "empty", True) or "period_original" not in df.columns:
         return df
     out = df.copy()
 
-    def _to_m(x):
+    def _anchor(x):
+        if not isinstance(x, pd.Period):
+            return None
+        fs = str(getattr(x, "freqstr", "") or "")
+        if fs.startswith("Q"):
+            return "Q"
+        if fs.startswith("A") or fs.startswith("Y"):
+            return "Y"
+        if fs.startswith("M"):
+            return "M"
+        return None
+
+    anchors = {a for a in (_anchor(x) for x in out["period_original"].dropna().head(80)) if a}
+    if anchors == {"Q"}:
+        target = "Q"
+    elif anchors == {"Y"}:
+        target = "Y"
+    else:
+        # Месяц или смесь — к Period[M] (как раньше для помесячного вида).
+        target = "M"
+
+    def _to_target(x):
         if isinstance(x, pd.Period):
-            return x.asfreq("M") if x.freq != "M" else x
+            fs = str(getattr(x, "freqstr", "") or "")
+            if target == "M":
+                return x if fs.startswith("M") else x.asfreq("M")
+            if target == "Q":
+                return x if fs.startswith("Q") else x.asfreq("Q")
+            if target == "Y":
+                return x if (fs.startswith("A") or fs.startswith("Y")) else x.asfreq("Y")
+            return x
         if x is None or (isinstance(x, float) and pd.isna(x)):
             return pd.NaT
         try:
-            return pd.Period(str(x), freq="M")
+            return pd.Period(str(x), freq=target)
         except Exception:
             pass
         try:
             ts = pd.Timestamp(x)
             if pd.notna(ts):
-                return ts.to_period("M")
+                return ts.to_period(target)
         except Exception:
             pass
         return pd.NaT
 
-    out["period_original"] = out["period_original"].map(_to_m)
+    out["period_original"] = out["period_original"].map(_to_target)
     return out
 
 

@@ -1292,6 +1292,59 @@ def expand_budget_month_grid(
     return _expand_chunk(df)
 
 
+def _period_freq_anchor(x: Any) -> str | None:
+    """Грубая гранулярность Period: M / Q / Y."""
+    if not isinstance(x, pd.Period):
+        return None
+    fs = str(getattr(x, "freqstr", "") or "")
+    if fs.startswith("Q"):
+        return "Q"
+    if fs.startswith("A") or fs.startswith("Y"):
+        return "Y"
+    if fs.startswith("M"):
+        return "M"
+    return None
+
+
+def _budget_summary_is_monthly(
+    summary: pd.DataFrame,
+    *,
+    period_col: str,
+    period_original_col: str = "period_original",
+) -> bool:
+    """True, если сводка помесячная (помесячный overlay применим)."""
+    pc = str(period_col or "").strip().lower()
+    if pc in ("plan_quarter", "plan_year") or "quarter" in pc or "year" in pc or "год" in pc or "квартал" in pc:
+        return False
+    if pc in ("plan_month",) or "month" in pc or "месяц" in pc:
+        return True
+    col = period_original_col if period_original_col in summary.columns else period_col
+    if col not in summary.columns:
+        return True
+    anchors = {
+        a
+        for a in (_period_freq_anchor(x) for x in summary[col].dropna().head(50))
+        if a
+    }
+    if anchors & {"Q", "Y"}:
+        return False
+    return True
+
+
+def _period_group_key(x: Any) -> Any:
+    """Ключ groupby без сравнения Period разных freq (иначе IncompatibleFrequency)."""
+    if isinstance(x, pd.Period):
+        return f"{x.freqstr}:{x.ordinal}"
+    if x is None or (isinstance(x, float) and pd.isna(x)):
+        return None
+    try:
+        if pd.isna(x):
+            return None
+    except Exception:
+        pass
+    return x
+
+
 def merge_budget_summary_by_norm_project_month(
     summary: pd.DataFrame,
     *,
@@ -1310,6 +1363,7 @@ def merge_budget_summary_by_norm_project_month(
 
     out = summary.copy()
     out["_norm_pk"] = out[project_col].map(_project_filter_norm_key)
+    out["_po_key"] = out[period_original_col].map(_period_group_key)
     name_map: dict[str, str] = {}
     for nm in out[project_col].dropna().unique():
         pk = _project_filter_norm_key(nm)
@@ -1322,21 +1376,31 @@ def merge_budget_summary_by_norm_project_month(
             if pk:
                 name_map[pk] = canon
 
-    agg: dict[str, str] = {period_col: "first", project_col: "first"}
+    agg: dict[str, str] = {
+        period_col: "first",
+        project_col: "first",
+        period_original_col: "first",
+    }
     for col in fill_columns:
         if col in out.columns:
             agg[col] = "sum"
     for col in out.columns:
-        if col.startswith("budget ") and col not in agg and col not in (period_col, project_col, period_original_col, "_norm_pk"):
+        if col.startswith("budget ") and col not in agg and col not in (
+            period_col,
+            project_col,
+            period_original_col,
+            "_norm_pk",
+            "_po_key",
+        ):
             agg[col] = "sum"
 
     merged = (
-        out.groupby([period_original_col, "_norm_pk"], dropna=False)
+        out.groupby(["_po_key", "_norm_pk"], dropna=False)
         .agg(agg)
         .reset_index()
     )
     merged[project_col] = merged["_norm_pk"].map(lambda k: name_map.get(k, k))
-    merged = merged.drop(columns=["_norm_pk"], errors="ignore")
+    merged = merged.drop(columns=["_norm_pk", "_po_key"], errors="ignore")
     cols = [c for c in summary.columns if c in merged.columns]
     return merged[cols] if cols else merged
 
@@ -1370,9 +1434,10 @@ def consolidate_budget_summary_parent_child_aliases(
 
     out = summary.copy()
     out["_norm_pk"] = out[project_col].map(_project_filter_norm_key)
+    out["_po_key"] = out[period_original_col].map(_period_group_key)
     drop_idx: list[Any] = []
 
-    for _, grp in out.groupby(period_original_col, dropna=False):
+    for _, grp in out.groupby("_po_key", dropna=False):
         pks = {pk for pk in grp["_norm_pk"].tolist() if pk}
         if len(pks) < 2:
             continue
@@ -1387,7 +1452,7 @@ def consolidate_budget_summary_parent_child_aliases(
 
     if drop_idx:
         out = out.drop(index=drop_idx)
-    return out.drop(columns=["_norm_pk"], errors="ignore").reset_index(drop=True)
+    return out.drop(columns=["_norm_pk", "_po_key"], errors="ignore").reset_index(drop=True)
 
 
 def finalize_budget_summary_for_display(
@@ -1832,6 +1897,9 @@ def overlay_turnover_monthly_on_budget_summary(
     """
     if summary is None or summary.empty or not str(project_name or "").strip():
         return summary, False
+    # Помесячный overlay нельзя смешивать с Period[Q]/Y — IncompatibleFrequency.
+    if not _budget_summary_is_monthly(summary, period_col=period_col):
+        return summary, False
     prep = _bdds_turnover_g_for_project(
         project_name=project_name,
         period_start=period_start,
@@ -1963,6 +2031,8 @@ def overlay_demo_turnover_on_budget_summary(
     чтобы не раздувать итоги demo-оборотами 2025+.
     """
     if summary is None or summary.empty:
+        return summary, False
+    if not _budget_summary_is_monthly(summary, period_col=period_col):
         return summary, False
     demo = _load_demo_budget_turnover_df()
     if demo is None or demo.empty:
@@ -2131,6 +2201,9 @@ def overlay_1c_on_budget_summary(
     MSP остаётся основой по срокам; 1С уточняет месяцы, где есть обороты.
     """
     if summary is None or summary.empty:
+        return summary, False
+    # Для «Квартал»/«Год» сводка уже агрегирована; помесячный overlay ломает Period freq.
+    if not _budget_summary_is_monthly(summary, period_col=period_col):
         return summary, False
     ref = resolve_reference_1c_dannye(reference_1c_dannye)
     syn = try_synthetic_budget_from_1c_dannye(reference_1c_dannye=ref)
