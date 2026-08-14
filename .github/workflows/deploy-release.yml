@@ -1,4 +1,5 @@
-# Автодеплой при push в ветку release.
+# Аварийный откат Streamlit на VPS. Push в release больше НЕ деплоит —
+# prod UI на ai.conall.ru = Next webapp (showcase workflow_dispatch).
 #
 # Secrets (Settings → Secrets and variables → Actions):
 #   DEPLOY_HOST       - 94.141.105.174 (или DNS)
@@ -11,8 +12,6 @@
 name: Deploy release
 
 on:
-  push:
-    branches: [release]
   workflow_dispatch:
 
 concurrency:

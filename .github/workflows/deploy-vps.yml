@@ -1,10 +1,9 @@
-﻿# Deploy ai.conall.ru on push to release.
+﻿# Аварийный откат Streamlit на ai.conall.ru (только вручную).
+# Prod UI = Next webapp (bi-analytics-showcase deploy-ai-conall-prod.yml).
 # Secrets: VPS_HOST, VPS_USER, VPS_PORT, VPS_SSH_KEY or VPS_PASSWORD, VPS_DEPLOY_PATH
 name: Deploy ai.conall.ru
 
 on:
-  push:
-    branches: [release]
   workflow_dispatch:
 
 concurrency:
