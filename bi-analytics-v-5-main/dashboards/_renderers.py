@@ -18189,6 +18189,36 @@ def _rd_csv_cell_str(val: Any) -> str:
     return s
 
 
+def _rd_cipher_match_key(val: Any) -> str:
+    """Ключ сопоставления полного шифра РД: casefold + кириллица→латиница + ','→'.'.
+
+    TESSA часто пишет суффикс Latin ``A`` (``…-АС5-A``), план other_*_rd.csv —
+    Cyrillic ``А`` (``…-АС5-А``). Без нормализации join по полному шифру
+    промахивается и падает на неоднозначный short-cipher fallback.
+    """
+    s = _rd_csv_cell_str(val)
+    if not s:
+        return ""
+    t = s.casefold().replace("\xa0", " ").replace(",", ".")
+    _homo = str.maketrans(
+        {
+            "\u0430": "a",
+            "\u0441": "c",
+            "\u0435": "e",
+            "\u043d": "h",
+            "\u043a": "k",
+            "\u043c": "m",
+            "\u043e": "o",
+            "\u0440": "p",
+            "\u0442": "t",
+            "\u0445": "x",
+            "\u0443": "y",
+            "\u0432": "v",
+        }
+    )
+    return t.translate(_homo)
+
+
 def _rd_format_contract_no(val: Any) -> str:
     """RD-06: номер договора целым числом — без хвоста «.0» и научной нотации.
 
@@ -19045,40 +19075,47 @@ def _build_rd_work_doc_detail_table(
     if not isinstance(pc, dict):
         pc = {}
 
-    # Индексы TESSA: шифр / полный шифр → список (proj_key, idx).
-    # Проект сопоставляем толерантно (_project_norm_key_matches_msp_keys),
-    # иначе «Дмитровский»↔«Дмитровский 1» даёт все строки «Не выдано».
-    # Каждая карточка — не более одного раза (1 план ↔ 1 TESSA).
+    # Индексы TESSA: полный шифр (нормализованный) / (шифр, имя).
+    # Short-cipher-only fallback НЕ используем — см. _rd_cipher_match_key.
     by_pn: dict[tuple[str, str], list[tuple[str, int]]] = {}
     by_fc: dict[str, list[tuple[str, int]]] = {}
-    by_cipher: dict[str, list[tuple[str, int]]] = {}
     used_tessa: set[int] = set()
     if not tessa_tbl.empty:
         for _ti, _tr in tessa_tbl.iterrows():
             _pk = _project_filter_norm_key(_tr.get("Проект", ""))
             _cc = str(_tr.get("Шифр", "") or "").strip().casefold()
             _nm = str(_tr.get("Наименование разделов работ", "") or "").strip().casefold()
-            _fc = str(_tr.get("Шифр полный", "") or "").strip().casefold()
-            if _fc and _fc not in ("nan", "none"):
+            _fc = _rd_cipher_match_key(_tr.get("Шифр полный", ""))
+            if _fc:
                 by_fc.setdefault(_fc, []).append((_pk, _ti))
             if _cc:
                 by_pn.setdefault((_cc, _nm), []).append((_pk, _ti))
-                by_cipher.setdefault(_cc, []).append((_pk, _ti))
 
-    def _pick_tessa(pk: str, candidates: list[tuple[str, int]] | None) -> int | None:
+    def _pick_tessa(
+        pk: str,
+        candidates: list[tuple[str, int]] | None,
+        *,
+        unique_only: bool = False,
+    ) -> int | None:
         if not candidates:
             return None
         _pk_set = {pk} if pk else set()
+        hits: list[int] = []
         for _tpk, _ti in candidates:
             if _ti in used_tessa:
                 continue
             if not _pk_set:
-                return _ti
+                hits.append(_ti)
+                continue
             if _project_norm_key_matches_msp_keys(_tpk, _pk_set) or (
                 _tpk and _project_norm_key_matches_msp_keys(pk, {_tpk})
             ):
-                return _ti
-        return None
+                hits.append(_ti)
+        if not hits:
+            return None
+        if unique_only and len(hits) != 1:
+            return None
+        return hits[0]
 
     out_rows: list[dict[str, Any]] = []
     for _i, row in csv_df.iterrows():
@@ -19101,12 +19138,15 @@ def _build_rd_work_doc_detail_table(
 
         pk = _project_filter_norm_key(proj)
         tessa_idx = None
-        if full_c:
-            tessa_idx = _pick_tessa(pk, by_fc.get(full_c.casefold()))
-        if tessa_idx is None:
-            tessa_idx = _pick_tessa(pk, by_pn.get((cipher.casefold(), sect.casefold())))
+        _fc_key = _rd_cipher_match_key(full_c)
+        if _fc_key:
+            tessa_idx = _pick_tessa(pk, by_fc.get(_fc_key))
         if tessa_idx is None and cipher:
-            tessa_idx = _pick_tessa(pk, by_cipher.get(cipher.casefold()))
+            tessa_idx = _pick_tessa(
+                pk,
+                by_pn.get((cipher.casefold(), sect.casefold())),
+                unique_only=True,
+            )
 
         plan_s = (
             row["_plan_dt"].strftime("%d.%m.%Y")
@@ -19129,6 +19169,13 @@ def _build_rd_work_doc_detail_table(
             tr = tessa_tbl.loc[tessa_idx]
             _plan_from_t = str(tr.get("Дата выдачи разделов по Договору", "") or "").strip()
             _fc_from_t = str(tr.get("Прогнозная дата выдачи разделов", "") or "").strip()
+            _tessa_full = str(tr.get("Шифр полный", "") or "").strip()
+            _full_out = full_c
+            if _tessa_full and (
+                not full_c
+                or _rd_cipher_match_key(_tessa_full) == _rd_cipher_match_key(full_c)
+            ):
+                _full_out = _tessa_full
             out_rows.append(
                 {
                     "Проект": proj or str(tr.get("Проект", "") or ""),
@@ -19139,7 +19186,7 @@ def _build_rd_work_doc_detail_table(
                         or contract_no_csv
                     ),
                     "Шифр": cipher or str(tr.get("Шифр", "") or ""),
-                    "Шифр полный": full_c or str(tr.get("Шифр полный", "") or ""),
+                    "Шифр полный": _full_out or _tessa_full,
                     "Версия": str(tr.get("Версия", "") or ""),
                     "Статус": str(tr.get("Статус", "") or _RD_TESSA_STATUS_NOT_ISSUED),
                     "Дата выдачи разделов по Договору": (
@@ -41399,6 +41446,35 @@ def _forecast_editor_visible_mask(pdf: pd.DataFrame) -> pd.Series:
     return has_sum
 
 
+def _forecast_pick_group_section(g: pd.DataFrame, lot_name: str) -> str:
+    """Раздел группы лота: частая подпись section/BLOCK, не совпадающая с лотом/проектом."""
+    skip = {str(lot_name or "").strip().casefold()}
+    if "project name" in g.columns:
+        for raw in g["project name"].tolist():
+            p = _clean_display_str(raw)
+            if p:
+                skip.add(p.casefold())
+    for col in ("section", "BLOCK", "block"):
+        if col not in g.columns:
+            continue
+        vals: list[str] = []
+        for raw in g[col].tolist():
+            s = _clean_display_str(raw)
+            if not s:
+                continue
+            if s.casefold() in skip:
+                continue
+            vals.append(s)
+        if vals:
+            try:
+                from collections import Counter
+
+                return str(Counter(vals).most_common(1)[0][0])
+            except Exception:
+                return vals[0]
+    return "—"
+
+
 def _forecast_deduplicate_msp_rows(pdf: pd.DataFrame) -> pd.DataFrame:
     """Один лот (метка + plan start/end) — одна строка; при дублях оставляем с большей суммой."""
     if pdf is None or getattr(pdf, "empty", True):
@@ -41460,13 +41536,19 @@ def _forecast_aggregate_by_lot(pdf: pd.DataFrame) -> pd.DataFrame:
 
     rows_out: List[dict] = []
     for _lot, g in work.groupby("_fc_lot", sort=False):
+        lot_name = str(_lot).strip() if _lot is not None else ""
+        if not lot_name or lot_name.casefold() in {"nan", "none", "<na>"}:
+            lot_name = "—"
         rows_out.append(
             {
                 "project name": (
                     g["project name"].iloc[0] if "project name" in g.columns else _proj
                 ),
-                "section": _lot,
-                "task name": _lot,
+                # Не подменять раздел именем лота — иначе в редакторе Раздел≡Лот.
+                "section": _forecast_pick_group_section(g, lot_name),
+                "lot": lot_name,
+                "ЛОТ": lot_name,
+                "task name": lot_name,
                 "plan start": g["plan start"].min(),
                 "plan end": g["plan end"].max(),
                 "budget plan": float(g["budget plan"].sum()),
@@ -41670,39 +41752,69 @@ def _forecast_overlay_turnover_on_monthly(
     mf: pd.DataFrame,
     turnover: dict,
 ) -> pd.DataFrame:
-    """Дополняет помесячный ряд месяцами из оборотов 1С, не подменяя план/факт MSP.
+    """Сводит помесячный ряд MSP/лотов с оборотами 1С.
 
-    План/факт/прогноз на этом экране считаются из таблицы лотов (равномерно или % A/B/C).
-    Раньше обороты 1С затирали MSP-план/факт → после смены условия лота «прогноз»
-    визуально «не пересчитывался» относительно чужих цифр 1С, а ожидаемые доли A%
-    (напр. 34% от суммы лотов с началом в месяце) не сходились с таблицей.
-    1С здесь только добавляет месяцы, которых нет в MSP-ряде (план/факт/прогноз = 0).
+    Если в MSP уже есть ненулевой план/факт (редактор лотов / merge по ЛОТ_ID) —
+    обороты 1С не затирают эти суммы (иначе «прогноз» визуально «не пересчитывается»).
+    Если же MSP-ряд пустой (типично для FTP/web_data без budget в project),
+    подставляем план/факт из оборотов 1С и прогноз = план, иначе экран нулевой.
+    Месяцы, которых нет в MSP, добавляются из 1С с теми же суммами.
     """
     if mf is None or getattr(mf, "empty", True):
         return mf
     out = mf.copy()
     if not turnover:
         return out
-    existing = {
-        _forecast_norm_month_period(m)
-        for m in out["month"].tolist()
+
+    pl0 = pd.to_numeric(out.get("bdds_plan_msp"), errors="coerce").fillna(0.0)
+    fc0 = pd.to_numeric(out.get("bdds_fact"), errors="coerce").fillna(0.0)
+    fr0 = pd.to_numeric(out.get("bdds_forecast"), errors="coerce").fillna(0.0)
+    msp_empty = float(pl0.abs().sum() + fc0.abs().sum()) <= 50_000.0
+
+    by_month = {
+        _forecast_norm_month_period(m): (float(pl), float(fc))
+        for m, (pl, fc) in turnover.items()
     }
+    existing = {_forecast_norm_month_period(m) for m in out["month"].tolist()}
+
+    if msp_empty:
+        for idx in out.index:
+            mk = _forecast_norm_month_period(out.at[idx, "month"])
+            if mk is pd.NaT or (isinstance(mk, float) and pd.isna(mk)):
+                continue
+            pair = by_month.get(mk)
+            if not pair:
+                continue
+            pl, fc = pair
+            out.at[idx, "bdds_plan_msp"] = pl
+            out.at[idx, "bdds_fact"] = fc
+            if abs(float(fr0.get(idx, 0.0) or 0.0)) <= 50_000.0:
+                out.at[idx, "bdds_forecast"] = pl
+
     extra_rows: list[dict] = []
-    for m, (_pl, _fc) in turnover.items():
-        mk = _forecast_norm_month_period(m)
+    for mk, (pl, fc) in by_month.items():
         if mk is pd.NaT or (isinstance(mk, float) and pd.isna(mk)):
             continue
         if mk in existing:
             continue
-        # Месяц есть только в оборотах — оставляем нули, чтобы не смешивать источники.
-        extra_rows.append(
-            {
-                "month": mk,
-                "bdds_plan_msp": 0.0,
-                "bdds_fact": 0.0,
-                "bdds_forecast": 0.0,
-            }
-        )
+        if msp_empty:
+            extra_rows.append(
+                {
+                    "month": mk,
+                    "bdds_plan_msp": pl,
+                    "bdds_fact": fc,
+                    "bdds_forecast": pl,
+                }
+            )
+        else:
+            extra_rows.append(
+                {
+                    "month": mk,
+                    "bdds_plan_msp": 0.0,
+                    "bdds_fact": 0.0,
+                    "bdds_forecast": 0.0,
+                }
+            )
     if not extra_rows:
         return out
     return (
