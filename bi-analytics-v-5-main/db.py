@@ -161,6 +161,32 @@ def init_all_tables(st_callback=None):
         "CREATE INDEX IF NOT EXISTS idx_auth_sessions_expires ON auth_sessions (expires_at)"
     )
 
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS bug_reports (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            username TEXT NOT NULL,
+            user_role TEXT,
+            report_tab TEXT,
+            page_url TEXT,
+            theme TEXT,
+            version_id INTEGER,
+            app_build TEXT,
+            user_text TEXT NOT NULL,
+            category TEXT,
+            priority TEXT,
+            ai_title TEXT,
+            ai_summary TEXT,
+            ai_confidence REAL,
+            ai_source TEXT,
+            status TEXT NOT NULL DEFAULT 'queued',
+            trello_card_id TEXT,
+            trello_card_url TEXT,
+            error_message TEXT,
+            raw_ai_response TEXT,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )
+    """)
+
     conn.commit()
 
     # Дефолтный суперадминистратор (учитываем только активных — как в create_user).

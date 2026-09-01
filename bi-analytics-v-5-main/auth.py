@@ -968,6 +968,16 @@ def render_sidebar_menu(current_page: str = "reports", *, include_footer: bool =
                 )
             st.markdown("---")
 
+        try:
+            from bug_report.ui import render_bug_report_sidebar_entry
+
+            render_bug_report_sidebar_entry(user)
+            st.markdown("---")
+        except Exception as _bug_ui_exc:
+            import logging
+
+            logging.getLogger(__name__).warning("bug_report sidebar: %s", _bug_ui_exc)
+
         # 1. Отчёты (отдельный визуальный блок от настроек)
         if has_report_access(user["role"]) and current_page != "reports":
             if st.button("К дашбордам", width="stretch", key="menu_go_reports"):
