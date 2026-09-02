@@ -166,6 +166,8 @@ def init_all_tables(st_callback=None):
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             username TEXT NOT NULL,
             user_role TEXT,
+            first_name TEXT,
+            last_name TEXT,
             report_tab TEXT,
             page_url TEXT,
             theme TEXT,
@@ -186,6 +188,11 @@ def init_all_tables(st_callback=None):
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         )
     """)
+    bug_cols = {row[1] for row in cursor.execute("PRAGMA table_info(bug_reports)").fetchall()}
+    if "first_name" not in bug_cols:
+        cursor.execute("ALTER TABLE bug_reports ADD COLUMN first_name TEXT")
+    if "last_name" not in bug_cols:
+        cursor.execute("ALTER TABLE bug_reports ADD COLUMN last_name TEXT")
 
     conn.commit()
 
