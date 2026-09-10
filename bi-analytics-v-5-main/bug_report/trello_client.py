@@ -9,7 +9,7 @@ from typing import Any
 import requests
 
 from bug_report.categories import category_display, priority_display, TrelloTarget
-from bug_report.settings import BugReportSettings
+from bug_report.settings import BugReportSettings, get_bug_report_settings
 
 logger = logging.getLogger(__name__)
 
@@ -84,6 +84,39 @@ def resolve_inbox_list_id(settings: BugReportSettings) -> str:
     )
 
 
+def fetch_latest_card_comment(card_id: str, settings: BugReportSettings | None = None) -> str:
+    """Текст последнего комментария на карточке (для писем клиенту)."""
+    settings = settings or get_bug_report_settings()
+    card_id = (card_id or "").strip()
+    if not card_id or not settings.trello_configured:
+        return ""
+    try:
+        resp = requests.get(
+            f"{TRELLO_API}/cards/{card_id}/actions",
+            params={
+                **_auth_params(settings),
+                "filter": "commentCard",
+                "limit": 1,
+            },
+            timeout=(3.0, 12.0),
+        )
+        resp.raise_for_status()
+        actions = resp.json()
+        if not isinstance(actions, list) or not actions:
+            return ""
+        data = actions[0].get("data") if isinstance(actions[0], dict) else None
+        if not isinstance(data, dict):
+            return ""
+        text = str(data.get("text") or "").strip()
+        # Не тащим километровые внутренние заметки в письмо.
+        if len(text) > 2000:
+            text = text[:2000].rstrip() + "…"
+        return text
+    except Exception as exc:
+        logger.warning("bug_report: latest comment for %s: %s", card_id, exc)
+        return ""
+
+
 def ensure_inbox_list_first(settings: BugReportSettings, list_id: str) -> None:
     """Держим колонку «Анализ» первой слева на доске."""
     try:
@@ -125,7 +158,10 @@ def _format_description(
         f"- URL: {context.get('page_url', '—')}",
         f"- version_id: {context.get('version_id', '—')}",
         f"- Сборка: {context.get('app_build', '—')}",
+        f"- Email: {context.get('contact_email', '—')}",
         f"- report_id локальный: #{context.get('report_id', '—')}",
+        f"- № для пользователя: {context.get('user_seq', '—')}",
+        f"- Связана с заявкой: #{context.get('related_report_id') or '—'}",
     ]
     return "\n".join(lines)
 
@@ -160,8 +196,8 @@ def create_bug_report_card(
             "Trello list_id is not configured (нужна открытая колонка «Анализ»)"
         )
     ensure_inbox_list_first(settings, list_id)
-    params: dict[str, Any] = {
-        **_auth_params(settings),
+    # desc/name в body — иначе длинный текст даёт 414 Request-URI Too Large
+    body: dict[str, Any] = {
         "idList": list_id,
         "pos": "top",
         "name": title[:160],
@@ -172,10 +208,11 @@ def create_bug_report_card(
         ),
     }
     if target.label_ids:
-        params["idLabels"] = ",".join(target.label_ids)
+        body["idLabels"] = ",".join(target.label_ids)
     resp = requests.post(
         f"{TRELLO_API}/cards",
-        params=params,
+        params=_auth_params(settings),
+        data=body,
         timeout=(3.0, 20.0),
     )
     resp.raise_for_status()
