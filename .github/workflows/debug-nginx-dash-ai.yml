@@ -1,0 +1,46 @@
+# Diagnose HTTPS 403 on ai.conall.ru (nginx on dash-ai-01)
+name: Debug nginx dash-ai
+
+on:
+  workflow_dispatch:
+
+jobs:
+  debug:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Inspect nginx on dash-ai
+        uses: appleboy/ssh-action@v1.2.4
+        with:
+          host: ${{ secrets.VPS_HOST }}
+          username: ${{ secrets.VPS_USER }}
+          key: ${{ secrets.VPS_SSH_KEY }}
+          password: ${{ secrets.VPS_PASSWORD }}
+          port: ${{ secrets.VPS_PORT }}
+          command_timeout: 10m
+          script: |
+            set -uo pipefail
+            echo "=== host ==="
+            hostname; whoami; date -u
+            echo "=== listeners 80/443 ==="
+            (ss -lntp 2>/dev/null || netstat -lntp 2>/dev/null || true) | grep -E ':80 |:443 ' || true
+            echo "=== curl local/public ==="
+            curl -sS -o /tmp/b80.txt -w "http://127.0.0.1 Host ai -> %{http_code}\n" -H "Host: ai.conall.ru" --connect-timeout 5 http://127.0.0.1/ || true
+            curl -sS -o /tmp/b443.txt -w "https://127.0.0.1 Host ai -> %{http_code}\n" -k -H "Host: ai.conall.ru" --connect-timeout 5 https://127.0.0.1/ || true
+            curl -sS -o /tmp/bpub.txt -w "https://ai.conall.ru -> %{http_code}\n" --connect-timeout 8 https://ai.conall.ru/ || true
+            echo "--- https body head ---"
+            head -c 300 /tmp/b443.txt; echo
+            echo "=== nginx files mentioning ai.conall ==="
+            sudo find /etc/nginx -type f 2>/dev/null | head -80
+            echo "=== grep deny/allow/403/server_name ==="
+            sudo grep -RInE 'ai\.conall|server_name|deny |allow |return 403|ssl_certificate|listen ' /etc/nginx 2>/dev/null | head -200 || true
+            echo "=== dump ai.conall configs ==="
+            sudo grep -RIl 'ai.conall' /etc/nginx 2>/dev/null | while read -r f; do
+              echo "#### $f ####"
+              sudo sed -n '1,260p' "$f"
+            done
+            echo "=== nginx -T filtered ==="
+            sudo nginx -T 2>/dev/null | awk '/server \{/,/^\}/ {buf=buf $0 "\n"} /^\}/ {if (buf ~ /ai\.conall/) print buf; buf=""}' | head -400
+            echo "=== error.log tail ==="
+            sudo tail -n 60 /var/log/nginx/error.log 2>/dev/null || true
+            sudo tail -n 40 /var/log/nginx/access.log 2>/dev/null || true
+            echo "=== DONE ==="
