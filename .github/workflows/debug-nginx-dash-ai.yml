@@ -19,28 +19,35 @@ jobs:
           command_timeout: 10m
           script: |
             set -uo pipefail
-            echo "=== host ==="
-            hostname; whoami; date -u
-            echo "=== listeners 80/443 ==="
-            (ss -lntp 2>/dev/null || netstat -lntp 2>/dev/null || true) | grep -E ':80 |:443 ' || true
-            echo "=== curl local/public ==="
-            curl -sS -o /tmp/b80.txt -w "http://127.0.0.1 Host ai -> %{http_code}\n" -H "Host: ai.conall.ru" --connect-timeout 5 http://127.0.0.1/ || true
-            curl -sS -o /tmp/b443.txt -w "https://127.0.0.1 Host ai -> %{http_code}\n" -k -H "Host: ai.conall.ru" --connect-timeout 5 https://127.0.0.1/ || true
-            curl -sS -o /tmp/bpub.txt -w "https://ai.conall.ru -> %{http_code}\n" --connect-timeout 8 https://ai.conall.ru/ || true
-            echo "--- https body head ---"
-            head -c 300 /tmp/b443.txt; echo
-            echo "=== nginx files mentioning ai.conall ==="
-            sudo find /etc/nginx -type f 2>/dev/null | head -80
-            echo "=== grep deny/allow/403/server_name ==="
-            sudo grep -RInE 'ai\.conall|server_name|deny |allow |return 403|ssl_certificate|listen ' /etc/nginx 2>/dev/null | head -200 || true
-            echo "=== dump ai.conall configs ==="
-            sudo grep -RIl 'ai.conall' /etc/nginx 2>/dev/null | while read -r f; do
+            echo "=== id ==="
+            id; groups; date -u
+            echo "=== perms /etc/nginx ==="
+            ls -la /etc/nginx 2>&1 | head -40
+            ls -la /etc/nginx/sites-enabled /etc/nginx/conf.d /etc/nginx/snippets 2>&1 | head -80
+            echo "=== readable grep ==="
+            grep -RInE 'ai\.conall|deny |allow |return 403|geo |satisfy|ssl_certificate' /etc/nginx 2>&1 | head -200 || true
+            echo "=== try sudo -n ==="
+            sudo -n true 2>&1 && echo SUDO_OK || echo SUDO_NEED_PASSWORD
+            sudo -n grep -RInE 'ai\.conall|deny |allow |return 403|geo |satisfy' /etc/nginx 2>&1 | head -200 || true
+            sudo -n find /etc/nginx -type f 2>&1 | head -100 || true
+            echo "=== dump configs via sudo -n ==="
+            sudo -n grep -RIl 'ai.conall' /etc/nginx 2>/dev/null | while read -r f; do
               echo "#### $f ####"
-              sudo sed -n '1,260p' "$f"
-            done
-            echo "=== nginx -T filtered ==="
-            sudo nginx -T 2>/dev/null | awk '/server \{/,/^\}/ {buf=buf $0 "\n"} /^\}/ {if (buf ~ /ai\.conall/) print buf; buf=""}' | head -400
-            echo "=== error.log tail ==="
-            sudo tail -n 60 /var/log/nginx/error.log 2>/dev/null || true
-            sudo tail -n 40 /var/log/nginx/access.log 2>/dev/null || true
+              sudo -n sed -n '1,300p' "$f"
+            done || true
+            echo "=== nginx -T via sudo -n (ai blocks) ==="
+            sudo -n nginx -T 2>/dev/null | awk 'BEGIN{p=0} /server_name/ {print} /listen / {print} /deny / {print} /allow / {print} /return 403/ {print} /ai\.conall/ {print} /ssl_certificate/ {print}' | head -250 || true
+            echo "=== home nginx copies ==="
+            find "$HOME" -iname '*nginx*' -o -iname '*ai*conall*' 2>/dev/null | head -40 || true
+            echo "=== firewall ==="
+            sudo -n iptables -L -n 2>&1 | head -80 || true
+            sudo -n nft list ruleset 2>&1 | head -120 || true
+            echo "=== fail2ban ==="
+            sudo -n fail2ban-client status 2>&1 | head -40 || true
+            echo "=== access 403 samples ==="
+            sudo -n grep ' 403 ' /var/log/nginx/access.log 2>/dev/null | tail -30 || true
+            sudo -n tail -n 80 /var/log/nginx/error.log 2>&1 || true
+            echo "=== curl compare ==="
+            curl -sS -o /dev/null -w "local443 %{http_code}\n" -k -H "Host: ai.conall.ru" https://127.0.0.1/
+            curl -sS -o /dev/null -w "pub443 %{http_code}\n" https://ai.conall.ru/
             echo "=== DONE ==="
