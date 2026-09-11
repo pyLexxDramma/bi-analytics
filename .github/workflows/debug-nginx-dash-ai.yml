@@ -17,32 +17,26 @@ jobs:
           password: ${{ secrets.VPS_PASSWORD }}
           port: ${{ secrets.VPS_PORT }}
           command_timeout: 10m
+          envs: VPS_PASSWORD
           script: |
             set -uo pipefail
-            echo "=== sites-enabled listing ==="
-            ls -la /etc/nginx/sites-enabled/
-            echo "=== sites-available listing ==="
-            ls -la /etc/nginx/sites-available/
-            for f in \
-              /etc/nginx/sites-enabled/ai-conall \
-              /etc/nginx/sites-available/ai-conall \
-              /etc/nginx/sites-enabled/ai-conall-8501-bridge \
-              /etc/nginx/sites-available/ai-conall-8501-bridge \
-              /etc/nginx/sites-enabled/bi-analytics \
-              /etc/nginx/sites-available/bi-analytics \
-              /etc/nginx/nginx.conf
-            do
-              echo "#### FILE $f ####"
-              if [[ -r "$f" ]]; then
-                # strip private key material if any
-                sed -n '1,220p' "$f" | sed '/BEGIN .*PRIVATE KEY/,/END .*PRIVATE KEY/d'
-              else
-                echo "NOT_READABLE"
-              fi
-            done
-            echo "=== cert paths used ==="
-            grep -RIn 'ssl_certificate' /etc/nginx/sites-enabled /etc/nginx/sites-available 2>/dev/null | grep -v '.bak' | head -40 || true
-            echo "=== curl + redirect headers ==="
-            curl -sS -D - -o /dev/null -k -H "Host: ai.conall.ru" https://127.0.0.1/ | head -30
-            curl -sS -D - -o /dev/null http://127.0.0.1/ -H "Host: ai.conall.ru" | head -20
+            echo "=== find GlobalSign / ssl dir refs ==="
+            grep -RInE '/etc/nginx/ssl|GlobalSign|default_server|ssl_certificate' /etc/nginx 2>/dev/null | grep -v '.bak' | head -80 || true
+            echo "=== ls ssl + letsencrypt ==="
+            ls -la /etc/nginx/ssl 2>&1 | head -30
+            ls -la /etc/letsencrypt/live/ 2>&1 | head -40
+            ls -la /etc/letsencrypt/live/ai.conall.ru/ 2>&1 | head -20
+            echo "=== openssl local SNI ai ==="
+            echo | openssl s_client -connect 127.0.0.1:443 -servername ai.conall.ru 2>/dev/null | openssl x509 -noout -subject -issuer -dates 2>/dev/null || true
+            echo "=== openssl local SNI opencode ==="
+            echo | openssl s_client -connect 127.0.0.1:443 -servername opencode.conall.ru 2>/dev/null | openssl x509 -noout -subject -issuer 2>/dev/null || true
+            echo "=== openssl public SNI ai ==="
+            echo | openssl s_client -connect ai.conall.ru:443 -servername ai.conall.ru 2>/dev/null | openssl x509 -noout -subject -issuer 2>/dev/null || true
+            echo "=== sudo nginx -t / -T filter ==="
+            printf '%s\n' "${VPS_PASSWORD}" | sudo -S nginx -t 2>&1 | tail -30 || true
+            printf '%s\n' "${VPS_PASSWORD}" | sudo -S nginx -T 2>/dev/null | awk '/listen 443|server_name|ssl_certificate |default_server|deny |return 403|ai\.conall|web\.conall|ssl\//' | head -160 || true
+            echo "=== error.log ==="
+            printf '%s\n' "${VPS_PASSWORD}" | sudo -S tail -n 100 /var/log/nginx/error.log 2>&1 | tail -100 || true
             echo "=== DONE ==="
+        env:
+          VPS_PASSWORD: ${{ secrets.VPS_PASSWORD }}
